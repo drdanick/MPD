@@ -50,6 +50,8 @@ static constexpr unsigned GME_BUFFER_FRAMES = 2048;
 static constexpr unsigned GME_BUFFER_SAMPLES =
 	GME_BUFFER_FRAMES * GME_CHANNELS;
 
+static unsigned default_songlength;
+
 struct GmeContainerPath {
 	AllocatedPath path;
 	unsigned track;
@@ -68,6 +70,7 @@ gme_plugin_init(gcc_unused const ConfigBlock &block)
 		? (int)accuracy->GetBoolValue()
 		: -1;
 #endif
+    default_songlength = block.GetBlockValue("default_songlength", 0u);
 
 	return true;
 }
@@ -135,7 +138,7 @@ gme_file_decode(DecoderClient &client, Path path_fs)
 		return;
 	}
 
-	const int length = ti->play_length;
+	const int length = default_songlength;
 	gme_free_info(ti);
 
 	const SignedSongTime song_len = length > 0
