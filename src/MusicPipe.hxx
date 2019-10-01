@@ -1,5 +1,5 @@
 /*
- * Copyright 2003-2016 The Music Player Daemon Project
+ * Copyright 2003-2019 The Music Player Daemon Project
  * http://www.musicpd.org
  *
  * This program is free software; you can redistribute it and/or modify
@@ -20,17 +20,13 @@
 #ifndef MPD_PIPE_H
 #define MPD_PIPE_H
 
+#include "MusicChunkPtr.hxx"
 #include "thread/Mutex.hxx"
-#include "Compiler.h"
+#include "util/Compiler.h"
 
 #ifndef NDEBUG
 #include "AudioFormat.hxx"
 #endif
-
-#include <assert.h>
-
-struct MusicChunk;
-class MusicBuffer;
 
 /**
  * A queue of #MusicChunk objects.  One party appends chunks at the
@@ -38,10 +34,10 @@ class MusicBuffer;
  */
 class MusicPipe {
 	/** the first chunk */
-	MusicChunk *head = nullptr;
+	MusicChunkPtr head;
 
 	/** a pointer to the tail of the chunk */
-	MusicChunk **tail_r = &head;
+	MusicChunkPtr *tail_r = &head;
 
 	/** the current number of chunks */
 	unsigned size = 0;
@@ -54,22 +50,9 @@ class MusicPipe {
 #endif
 
 public:
-	/**
-	 * Creates a new #MusicPipe object.  It is empty.
-	 */
-	MusicPipe() = default;
-
-	MusicPipe(const MusicPipe &) = delete;
-
-	/**
-	 * Frees the object.  It must be empty now.
-	 */
-	~MusicPipe() {
-		assert(head == nullptr);
-		assert(tail_r == &head);
+	~MusicPipe() noexcept {
+		Clear();
 	}
-
-	MusicPipe &operator=(const MusicPipe &) = delete;
 
 #ifndef NDEBUG
 	/**
@@ -77,7 +60,7 @@ public:
 	 * audio_format.
 	 */
 	gcc_pure
-	bool CheckFormat(AudioFormat other) const {
+	bool CheckFormat(AudioFormat other) const noexcept {
 		return !audio_format.IsDefined() ||
 			audio_format == other;
 	}
@@ -86,7 +69,7 @@ public:
 	 * Checks if the specified chunk is enqueued in the music pipe.
 	 */
 	gcc_pure
-	bool Contains(const MusicChunk *chunk) const;
+	bool Contains(const MusicChunk *chunk) const noexcept;
 #endif
 
 	/**
@@ -94,37 +77,37 @@ public:
 	 * nullptr if the pipe is empty.
 	 */
 	gcc_pure
-	const MusicChunk *Peek() const {
-		return head;
+	const MusicChunk *Peek() const noexcept {
+		const std::lock_guard<Mutex> protect(mutex);
+		return head.get();
 	}
 
 	/**
 	 * Removes the first chunk from the head, and returns it.
 	 */
-	MusicChunk *Shift();
+	MusicChunkPtr Shift() noexcept;
 
 	/**
 	 * Clears the whole pipe and returns the chunks to the buffer.
-	 *
-	 * @param buffer the buffer object to return the chunks to
 	 */
-	void Clear(MusicBuffer &buffer);
+	void Clear() noexcept;
 
 	/**
 	 * Pushes a chunk to the tail of the pipe.
 	 */
-	void Push(MusicChunk *chunk);
+	void Push(MusicChunkPtr chunk) noexcept;
 
 	/**
 	 * Returns the number of chunks currently in this pipe.
 	 */
 	gcc_pure
-	unsigned GetSize() const {
+	unsigned GetSize() const noexcept {
+		const std::lock_guard<Mutex> protect(mutex);
 		return size;
 	}
 
 	gcc_pure
-	bool IsEmpty() const {
+	bool IsEmpty() const noexcept {
 		return GetSize() == 0;
 	}
 };

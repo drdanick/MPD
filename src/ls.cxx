@@ -1,5 +1,5 @@
 /*
- * Copyright 2003-2016 The Music Player Daemon Project
+ * Copyright 2003-2019 The Music Player Daemon Project
  * http://www.musicpd.org
  *
  * This program is free software; you can redistribute it and/or modify
@@ -19,61 +19,28 @@
 
 #include "config.h"
 #include "ls.hxx"
+#include "input/Registry.hxx"
+#include "input/InputPlugin.hxx"
 #include "client/Response.hxx"
-#include "util/StringCompare.hxx"
-#include "util/UriUtil.hxx"
+#include "util/UriExtract.hxx"
 
 #include <assert.h>
 
-/**
-  * file:// is not included in remoteUrlPrefixes, the connection method
-  * is detected at runtime and displayed as a urlhandler if the client is
-  * connected by IPC socket.
-  */
-static const char *const remoteUrlPrefixes[] = {
-#if defined(ENABLE_CURL)
-	"http://",
-	"https://",
-#endif
-#ifdef ENABLE_MMS
-	"mms://",
-	"mmsh://",
-	"mmst://",
-	"mmsu://",
-#endif
-#ifdef ENABLE_FFMPEG
-	"gopher://",
-	"rtp://",
-	"rtsp://",
-	"rtmp://",
-	"rtmpt://",
-	"rtmps://",
-#endif
-#ifdef ENABLE_SMBCLIENT
-	"smb://",
-#endif
-#ifdef ENABLE_NFS
-	"nfs://",
-#endif
-#ifdef ENABLE_CDIO_PARANOIA
-	"cdda://",
-#endif
-#ifdef ENABLE_ALSA
-	"alsa://",
-#endif
-	NULL
-};
+#include <string>
 
 void print_supported_uri_schemes_to_fp(FILE *fp)
 {
-	const char *const*prefixes = remoteUrlPrefixes;
-
 #ifdef HAVE_UN
 	fprintf(fp, " file://");
 #endif
-	while (*prefixes) {
-		fprintf(fp, " %s", *prefixes);
-		prefixes++;
+	std::set<std::string> protocols;
+	input_plugins_for_each(plugin)
+		plugin->ForeachSupportedUri([&](const char* uri) {
+			protocols.emplace(uri);
+		});
+
+	for (auto protocol : protocols) {
+		fprintf(fp, " %s", protocol.c_str());
 	}
 	fprintf(fp,"\n");
 }
@@ -81,25 +48,25 @@ void print_supported_uri_schemes_to_fp(FILE *fp)
 void
 print_supported_uri_schemes(Response &r)
 {
-	const char *const *prefixes = remoteUrlPrefixes;
+	std::set<std::string> protocols;
+	input_plugins_for_each_enabled(plugin)
+		plugin->ForeachSupportedUri([&](const char* uri) {
+			protocols.emplace(uri);
+		});
 
-	while (*prefixes) {
-		r.Format("handler: %s\n", *prefixes);
-		prefixes++;
+	for (auto protocol : protocols) {
+		r.Format("handler: %s\n", protocol.c_str());
 	}
 }
 
-bool uri_supported_scheme(const char *uri)
+bool
+uri_supported_scheme(const char *uri) noexcept
 {
-	const char *const*urlPrefixes = remoteUrlPrefixes;
-
 	assert(uri_has_scheme(uri));
 
-	while (*urlPrefixes) {
-		if (StringStartsWith(uri, *urlPrefixes))
+	input_plugins_for_each_enabled(plugin)
+		if (plugin->SupportsUri(uri))
 			return true;
-		urlPrefixes++;
-	}
 
 	return false;
 }

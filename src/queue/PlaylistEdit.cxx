@@ -1,5 +1,5 @@
 /*
- * Copyright 2003-2016 The Music Player Daemon Project
+ * Copyright 2003-2019 The Music Player Daemon Project
  * http://www.musicpd.org
  *
  * This program is free software; you can redistribute it and/or modify
@@ -23,20 +23,17 @@
  *
  */
 
-#include "config.h"
 #include "Playlist.hxx"
 #include "Listener.hxx"
 #include "PlaylistError.hxx"
 #include "player/Control.hxx"
-#include "DetachedSong.hxx"
+#include "song/DetachedSong.hxx"
 #include "SongLoader.hxx"
-
-#include <memory>
 
 #include <stdlib.h>
 
 void
-playlist::OnModified()
+playlist::OnModified() noexcept
 {
 	if (bulk_edit) {
 		/* postponed to CommitBulk() */
@@ -50,7 +47,7 @@ playlist::OnModified()
 }
 
 void
-playlist::Clear(PlayerControl &pc)
+playlist::Clear(PlayerControl &pc) noexcept
 {
 	Stop(pc);
 
@@ -61,7 +58,7 @@ playlist::Clear(PlayerControl &pc)
 }
 
 void
-playlist::BeginBulk()
+playlist::BeginBulk() noexcept
 {
 	assert(!bulk_edit);
 
@@ -70,7 +67,7 @@ playlist::BeginBulk()
 }
 
 void
-playlist::CommitBulk(PlayerControl &pc)
+playlist::CommitBulk(PlayerControl &pc) noexcept
 {
 	assert(bulk_edit);
 
@@ -112,7 +109,7 @@ playlist::AppendSong(PlayerControl &pc, DetachedSong &&song)
 		else
 			start = current + 1;
 		if (start < queue.GetLength())
-			queue.ShuffleOrderLast(start, queue.GetLength());
+			queue.ShuffleOrderLastWithPriority(start, queue.GetLength());
 	}
 
 	UpdateQueuedSong(pc, queued_song);
@@ -125,8 +122,7 @@ unsigned
 playlist::AppendURI(PlayerControl &pc, const SongLoader &loader,
 		    const char *uri)
 {
-	std::unique_ptr<DetachedSong> song(loader.LoadSong(uri));
-	return AppendSong(pc, std::move(*song));
+	return AppendSong(pc, loader.LoadSong(uri));
 }
 
 void
@@ -215,7 +211,7 @@ playlist::SetPriorityId(PlayerControl &pc,
 
 void
 playlist::DeleteInternal(PlayerControl &pc,
-			 unsigned song, const DetachedSong **queued_p)
+			 unsigned song, const DetachedSong **queued_p) noexcept
 {
 	assert(song < GetLength());
 
@@ -308,7 +304,7 @@ playlist::DeleteId(PlayerControl &pc, unsigned id)
 }
 
 void
-playlist::StaleSong(PlayerControl &pc, const char *uri)
+playlist::StaleSong(PlayerControl &pc, const char *uri) noexcept
 {
 	/* don't remove the song if it's currently being played, to
 	   avoid disrupting playback; a deleted file may still be
@@ -324,7 +320,8 @@ playlist::StaleSong(PlayerControl &pc, const char *uri)
 }
 
 void
-playlist::MoveRange(PlayerControl &pc, unsigned start, unsigned end, int to)
+playlist::MoveRange(PlayerControl &pc,
+		    unsigned start, unsigned end, int to)
 {
 	if (!queue.IsValidPosition(start) || !queue.IsValidPosition(end - 1))
 		throw PlaylistError::BadRange();
@@ -385,7 +382,7 @@ playlist::MoveId(PlayerControl &pc, unsigned id1, int to)
 }
 
 void
-playlist::Shuffle(PlayerControl &pc, unsigned start, unsigned end)
+playlist::Shuffle(PlayerControl &pc, unsigned start, unsigned end) noexcept
 {
 	if (end > GetLength())
 		/* correct the "end" offset */

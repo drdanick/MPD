@@ -1,5 +1,5 @@
 /*
- * Copyright 2003-2016 The Music Player Daemon Project
+ * Copyright 2003-2019 The Music Player Daemon Project
  * http://www.musicpd.org
  *
  * This program is free software; you can redistribute it and/or modify
@@ -17,32 +17,86 @@
  * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
  */
 
-#include "config.h"
-#include "ClientInternal.hxx"
-#include "util/Domain.hxx"
+#include "Client.hxx"
+#include "Config.hxx"
 #include "Partition.hxx"
 #include "Instance.hxx"
+#include "BackgroundCommand.hxx"
+#include "config.h"
 
-const Domain client_domain("client");
+Client::~Client() noexcept
+{
+	if (FullyBufferedSocket::IsDefined())
+		FullyBufferedSocket::Close();
+
+	if (background_command) {
+		background_command->Cancel();
+		background_command.reset();
+	}
+}
+
+void
+Client::SetBackgroundCommand(std::unique_ptr<BackgroundCommand> _bc) noexcept
+{
+	assert(!background_command);
+	assert(_bc);
+
+	background_command = std::move(_bc);
+
+	/* disable timeouts while in "idle" */
+	timeout_event.Cancel();
+}
+
+void
+Client::OnBackgroundCommandFinished() noexcept
+{
+	assert(background_command);
+
+	background_command.reset();
+
+	/* just in case OnSocketInput() has returned
+	   InputResult::PAUSE meanwhile */
+	ResumeInput();
+
+	timeout_event.Schedule(client_timeout);
+}
+
+Instance &
+Client::GetInstance() noexcept
+{
+	return partition->instance;
+}
+
+playlist &
+Client::GetPlaylist() noexcept
+{
+	return partition->playlist;
+}
+
+PlayerControl &
+Client::GetPlayerControl() noexcept
+{
+	return partition->pc;
+}
 
 #ifdef ENABLE_DATABASE
 
 const Database *
-Client::GetDatabase() const
+Client::GetDatabase() const noexcept
 {
-	return partition.instance.GetDatabase();
+	return partition->instance.GetDatabase();
 }
 
 const Database &
 Client::GetDatabaseOrThrow() const
 {
-	return partition.instance.GetDatabaseOrThrow();
+	return partition->instance.GetDatabaseOrThrow();
 }
 
 const Storage *
-Client::GetStorage() const
+Client::GetStorage() const noexcept
 {
-	return partition.instance.storage;
+	return partition->instance.storage;
 }
 
 #endif

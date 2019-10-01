@@ -1,5 +1,5 @@
 /*
- * Copyright 2003-2016 The Music Player Daemon Project
+ * Copyright 2003-2019 The Music Player Daemon Project
  * http://www.musicpd.org
  *
  * This program is free software; you can redistribute it and/or modify
@@ -17,11 +17,9 @@
  * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
  */
 
-#include "config.h"
 #include "TwolameEncoderPlugin.hxx"
 #include "../EncoderAPI.hxx"
 #include "AudioFormat.hxx"
-#include "config/ConfigError.hxx"
 #include "util/NumberParser.hxx"
 #include "util/RuntimeError.hxx"
 #include "util/Domain.hxx"
@@ -54,7 +52,7 @@ public:
 		       twolame_options *_options)
 		:Encoder(false),
 		 audio_format(_audio_format), options(_options) {}
-	~TwolameEncoder() override;
+	~TwolameEncoder() noexcept override;
 
 	/* virtual methods from class Encoder */
 
@@ -67,7 +65,7 @@ public:
 	}
 
 	void Write(const void *data, size_t length) override;
-	size_t Read(void *dest, size_t length) override;
+	size_t Read(void *dest, size_t length) noexcept override;
 };
 
 class PreparedTwolameEncoder final : public PreparedEncoder {
@@ -80,7 +78,7 @@ public:
 	/* virtual methods from class PreparedEncoder */
 	Encoder *Open(AudioFormat &audio_format) override;
 
-	const char *GetMimeType() const override {
+	const char *GetMimeType() const noexcept override {
 		return  "audio/mpeg";
 	}
 };
@@ -180,7 +178,7 @@ PreparedTwolameEncoder::Open(AudioFormat &audio_format)
 	return new TwolameEncoder(audio_format, options);
 }
 
-TwolameEncoder::~TwolameEncoder()
+TwolameEncoder::~TwolameEncoder() noexcept
 {
 	twolame_close(&options);
 }
@@ -206,7 +204,7 @@ TwolameEncoder::Write(const void *data, size_t length)
 }
 
 size_t
-TwolameEncoder::Read(void *dest, size_t length)
+TwolameEncoder::Read(void *dest, size_t length) noexcept
 {
 	assert(output_buffer_position <= output_buffer_length);
 

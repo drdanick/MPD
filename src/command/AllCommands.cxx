@@ -1,5 +1,5 @@
 /*
- * Copyright 2003-2016 The Music Player Daemon Project
+ * Copyright 2003-2019 The Music Player Daemon Project
  * http://www.musicpd.org
  *
  * This program is free software; you can redistribute it and/or modify
@@ -31,20 +31,24 @@
 #include "OutputCommands.hxx"
 #include "MessageCommands.hxx"
 #include "NeighborCommands.hxx"
+#include "ClientCommands.hxx"
+#include "PartitionCommands.hxx"
+#include "FingerprintCommands.hxx"
 #include "OtherCommands.hxx"
 #include "Permission.hxx"
-#include "tag/TagType.h"
+#include "tag/Type.h"
 #include "Partition.hxx"
+#include "Instance.hxx"
 #include "client/Client.hxx"
 #include "client/Response.hxx"
-#include "util/Macros.hxx"
 #include "util/Tokenizer.hxx"
 #include "util/StringAPI.hxx"
 
 #ifdef ENABLE_SQLITE
 #include "StickerCommands.hxx"
-#include "sticker/StickerDatabase.hxx"
 #endif
+
+#include <iterator>
 
 #include <assert.h>
 #include <string.h>
@@ -82,6 +86,7 @@ static constexpr struct command commands[] = {
 	{ "add", PERMISSION_ADD, 1, 1, handle_add },
 	{ "addid", PERMISSION_ADD, 1, 2, handle_addid },
 	{ "addtagid", PERMISSION_ADD, 3, 3, handle_addtagid },
+	{ "albumart", PERMISSION_READ, 2, 2, handle_album_art },
 	{ "channels", PERMISSION_READ, 0, 0, handle_channels },
 	{ "clear", PERMISSION_CONTROL, 0, 0, handle_clear },
 	{ "clearerror", PERMISSION_CONTROL, 0, 0, handle_clearerror },
@@ -91,7 +96,7 @@ static constexpr struct command commands[] = {
 	{ "config", PERMISSION_ADMIN, 0, 0, handle_config },
 	{ "consume", PERMISSION_CONTROL, 1, 1, handle_consume },
 #ifdef ENABLE_DATABASE
-	{ "count", PERMISSION_READ, 2, -1, handle_count },
+	{ "count", PERMISSION_READ, 1, -1, handle_count },
 #endif
 	{ "crossfade", PERMISSION_CONTROL, 1, 1, handle_crossfade },
 	{ "currentsong", PERMISSION_READ, 0, 0, handle_currentsong },
@@ -101,8 +106,11 @@ static constexpr struct command commands[] = {
 	{ "disableoutput", PERMISSION_ADMIN, 1, 1, handle_disableoutput },
 	{ "enableoutput", PERMISSION_ADMIN, 1, 1, handle_enableoutput },
 #ifdef ENABLE_DATABASE
-	{ "find", PERMISSION_READ, 2, -1, handle_find },
-	{ "findadd", PERMISSION_ADD, 2, -1, handle_findadd},
+	{ "find", PERMISSION_READ, 1, -1, handle_find },
+	{ "findadd", PERMISSION_ADD, 1, -1, handle_findadd},
+#endif
+#ifdef ENABLE_CHROMAPRINT
+	{ "getfingerprint", PERMISSION_READ, 1, 1, handle_getfingerprint },
 #endif
 	{ "idle", PERMISSION_READ, 0, -1, handle_idle },
 	{ "kill", PERMISSION_ADMIN, -1, -1, handle_kill },
@@ -118,6 +126,7 @@ static constexpr struct command commands[] = {
 #ifdef ENABLE_NEIGHBOR_PLUGINS
 	{ "listneighbors", PERMISSION_READ, 0, 0, handle_listneighbors },
 #endif
+	{ "listpartitions", PERMISSION_READ, 0, 0, handle_listpartitions },
 	{ "listplaylist", PERMISSION_READ, 1, 1, handle_listplaylist },
 	{ "listplaylistinfo", PERMISSION_READ, 1, 1, handle_listplaylistinfo },
 	{ "listplaylists", PERMISSION_READ, 0, 0, handle_listplaylists },
@@ -130,9 +139,12 @@ static constexpr struct command commands[] = {
 #endif
 	{ "move", PERMISSION_CONTROL, 2, 2, handle_move },
 	{ "moveid", PERMISSION_CONTROL, 2, 2, handle_moveid },
+	{ "newpartition", PERMISSION_ADMIN, 1, 1, handle_newpartition },
 	{ "next", PERMISSION_CONTROL, 0, 0, handle_next },
 	{ "notcommands", PERMISSION_NONE, 0, 0, handle_not_commands },
 	{ "outputs", PERMISSION_READ, 0, 0, handle_devices },
+	{ "outputset", PERMISSION_ADMIN, 3, 3, handle_outputset },
+	{ "partition", PERMISSION_READ, 1, 1, handle_partition },
 	{ "password", PERMISSION_NONE, 1, 1, handle_password },
 	{ "pause", PERMISSION_CONTROL, 0, 1, handle_pause },
 	{ "ping", PERMISSION_NONE, 0, 0, handle_ping },
@@ -142,11 +154,11 @@ static constexpr struct command commands[] = {
 	{ "playlistadd", PERMISSION_CONTROL, 2, 2, handle_playlistadd },
 	{ "playlistclear", PERMISSION_CONTROL, 1, 1, handle_playlistclear },
 	{ "playlistdelete", PERMISSION_CONTROL, 2, 2, handle_playlistdelete },
-	{ "playlistfind", PERMISSION_READ, 2, -1, handle_playlistfind },
+	{ "playlistfind", PERMISSION_READ, 1, -1, handle_playlistfind },
 	{ "playlistid", PERMISSION_READ, 0, 1, handle_playlistid },
 	{ "playlistinfo", PERMISSION_READ, 0, 1, handle_playlistinfo },
 	{ "playlistmove", PERMISSION_CONTROL, 3, 3, handle_playlistmove },
-	{ "playlistsearch", PERMISSION_READ, 2, -1, handle_playlistsearch },
+	{ "playlistsearch", PERMISSION_READ, 1, -1, handle_playlistsearch },
 	{ "plchanges", PERMISSION_READ, 1, 2, handle_plchanges },
 	{ "plchangesposid", PERMISSION_READ, 1, 2, handle_plchangesposid },
 	{ "previous", PERMISSION_CONTROL, 0, 0, handle_previous },
@@ -156,6 +168,7 @@ static constexpr struct command commands[] = {
 	{ "rangeid", PERMISSION_ADD, 2, 2, handle_rangeid },
 	{ "readcomments", PERMISSION_READ, 1, 1, handle_read_comments },
 	{ "readmessages", PERMISSION_READ, 0, 0, handle_read_messages },
+	{ "readpicture", PERMISSION_READ, 2, 2, handle_read_picture },
 	{ "rename", PERMISSION_CONTROL, 2, 2, handle_rename },
 	{ "repeat", PERMISSION_CONTROL, 1, 1, handle_repeat },
 	{ "replay_gain_mode", PERMISSION_CONTROL, 1, 1,
@@ -166,9 +179,9 @@ static constexpr struct command commands[] = {
 	{ "rm", PERMISSION_CONTROL, 1, 1, handle_rm },
 	{ "save", PERMISSION_CONTROL, 1, 1, handle_save },
 #ifdef ENABLE_DATABASE
-	{ "search", PERMISSION_READ, 2, -1, handle_search },
-	{ "searchadd", PERMISSION_ADD, 2, -1, handle_searchadd },
-	{ "searchaddpl", PERMISSION_CONTROL, 3, -1, handle_searchaddpl },
+	{ "search", PERMISSION_READ, 1, -1, handle_search },
+	{ "searchadd", PERMISSION_ADD, 1, -1, handle_searchadd },
+	{ "searchaddpl", PERMISSION_CONTROL, 2, -1, handle_searchaddpl },
 #endif
 	{ "seek", PERMISSION_CONTROL, 2, 2, handle_seek },
 	{ "seekcur", PERMISSION_CONTROL, 1, 1, handle_seekcur },
@@ -186,7 +199,7 @@ static constexpr struct command commands[] = {
 	{ "subscribe", PERMISSION_READ, 1, 1, handle_subscribe },
 	{ "swap", PERMISSION_CONTROL, 2, 2, handle_swap },
 	{ "swapid", PERMISSION_CONTROL, 2, 2, handle_swapid },
-	{ "tagtypes", PERMISSION_READ, 0, 0, handle_tagtypes },
+	{ "tagtypes", PERMISSION_READ, 0, -1, handle_tagtypes },
 	{ "toggleoutput", PERMISSION_ADMIN, 1, 1, handle_toggleoutput },
 #ifdef ENABLE_DATABASE
 	{ "unmount", PERMISSION_ADMIN, 1, 1, handle_unmount },
@@ -197,15 +210,16 @@ static constexpr struct command commands[] = {
 	{ "volume", PERMISSION_CONTROL, 1, 1, handle_volume },
 };
 
-static constexpr unsigned num_commands = ARRAY_SIZE(commands);
+static constexpr unsigned num_commands = std::size(commands);
 
+gcc_pure
 static bool
 command_available(gcc_unused const Partition &partition,
-		  gcc_unused const struct command *cmd)
+		  gcc_unused const struct command *cmd) noexcept
 {
 #ifdef ENABLE_SQLITE
 	if (StringIsEqual(cmd->cmd, "sticker"))
-		return sticker_enabled();
+		return partition.instance.HasStickerDatabase();
 #endif
 
 #ifdef ENABLE_NEIGHBOR_PLUGINS
@@ -228,7 +242,7 @@ command_available(gcc_unused const Partition &partition,
 
 static CommandResult
 PrintAvailableCommands(Response &r, const Partition &partition,
-		     unsigned permission)
+		     unsigned permission) noexcept
 {
 	for (unsigned i = 0; i < num_commands; ++i) {
 		const struct command *cmd = &commands[i];
@@ -242,7 +256,7 @@ PrintAvailableCommands(Response &r, const Partition &partition,
 }
 
 static CommandResult
-PrintUnavailableCommands(Response &r, unsigned permission)
+PrintUnavailableCommands(Response &r, unsigned permission) noexcept
 {
 	for (unsigned i = 0; i < num_commands; ++i) {
 		const struct command *cmd = &commands[i];
@@ -258,7 +272,7 @@ PrintUnavailableCommands(Response &r, unsigned permission)
 static CommandResult
 handle_commands(Client &client, gcc_unused Request request, Response &r)
 {
-	return PrintAvailableCommands(r, client.partition,
+	return PrintAvailableCommands(r, client.GetPartition(),
 				      client.GetPermission());
 }
 
@@ -269,7 +283,7 @@ handle_not_commands(Client &client, gcc_unused Request request, Response &r)
 }
 
 void
-command_init()
+command_init() noexcept
 {
 #ifndef NDEBUG
 	/* ensure that the command list is sorted */
@@ -278,13 +292,9 @@ command_init()
 #endif
 }
 
-void
-command_finish()
-{
-}
-
+gcc_pure
 static const struct command *
-command_lookup(const char *name)
+command_lookup(const char *name) noexcept
 {
 	unsigned a = 0, b = num_commands, i;
 
@@ -306,7 +316,7 @@ command_lookup(const char *name)
 
 static bool
 command_check_request(const struct command *cmd, Response &r,
-		      unsigned permission, Request args)
+		      unsigned permission, Request args) noexcept
 {
 	if (cmd->permission != (permission & cmd->permission)) {
 		r.FormatError(ACK_ERROR_PERMISSION,
@@ -340,7 +350,7 @@ command_check_request(const struct command *cmd, Response &r,
 
 static const struct command *
 command_checked_lookup(Response &r, unsigned permission,
-		       const char *cmd_name, Request args)
+		       const char *cmd_name, Request args) noexcept
 {
 	const struct command *cmd = command_lookup(cmd_name);
 	if (cmd == nullptr) {
@@ -358,8 +368,8 @@ command_checked_lookup(Response &r, unsigned permission,
 }
 
 CommandResult
-command_process(Client &client, unsigned num, char *line)
-try {
+command_process(Client &client, unsigned num, char *line) noexcept
+{
 	Response r(client, num);
 
 	/* get the command name (first word on the line) */
@@ -387,34 +397,33 @@ try {
 	char *argv[COMMAND_ARGV_MAX];
 	Request args(argv, 0);
 
-	/* now parse the arguments (quoted or unquoted) */
+	try {
+		/* now parse the arguments (quoted or unquoted) */
 
-	while (true) {
-		if (args.size == COMMAND_ARGV_MAX) {
-			r.Error(ACK_ERROR_ARG, "Too many arguments");
-			return CommandResult::ERROR;
+		while (true) {
+			if (args.size == COMMAND_ARGV_MAX) {
+				r.Error(ACK_ERROR_ARG, "Too many arguments");
+				return CommandResult::ERROR;
+			}
+
+			char *a = tokenizer.NextParam();
+			if (a == nullptr)
+				break;
+
+			argv[args.size++] = a;
 		}
 
-		char *a = tokenizer.NextParam();
-		if (a == nullptr)
-			break;
+		/* look up and invoke the command handler */
 
-		argv[args.size++] = a;
+		const struct command *cmd =
+			command_checked_lookup(r, client.GetPermission(),
+					       cmd_name, args);
+		if (cmd == nullptr)
+			return CommandResult::ERROR;
+
+		return cmd->handler(client, args, r);
+	} catch (...) {
+		PrintError(r, std::current_exception());
+		return CommandResult::ERROR;
 	}
-
-	/* look up and invoke the command handler */
-
-	const struct command *cmd =
-		command_checked_lookup(r, client.GetPermission(),
-				       cmd_name, args);
-
-	CommandResult ret = cmd
-		? cmd->handler(client, args, r)
-		: CommandResult::ERROR;
-
-	return ret;
-} catch (const std::exception &e) {
-	Response r(client, num);
-	PrintError(r, std::current_exception());
-	return CommandResult::ERROR;
 }

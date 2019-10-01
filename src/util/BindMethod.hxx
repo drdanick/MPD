@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2016 Max Kellermann <max@duempel.org>
+ * Copyright 2016-2018 Max Kellermann <max.kellermann@gmail.com>
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -30,6 +30,8 @@
 #ifndef BIND_METHOD_HXX
 #define BIND_METHOD_HXX
 
+#include "Compiler.h"
+
 #include <type_traits>
 #include <utility>
 
@@ -43,9 +45,21 @@
 template<typename S=void()>
 class BoundMethod;
 
-template<typename R, typename... Args>
-class BoundMethod<R(Args...)> {
-	typedef R (*function_pointer)(void *instance, Args... args);
+#if GCC_OLDER_THAN(7,0)
+static constexpr bool NoExcept = false;
+#endif
+
+template<typename R,
+#if !GCC_OLDER_THAN(7,0)
+	bool NoExcept,
+#endif
+	typename... Args>
+class BoundMethod<R(Args...) noexcept(NoExcept)> {
+	typedef R (*function_pointer)(void *instance, Args... args)
+#if !GCC_OLDER_THAN(7,0)
+		noexcept(NoExcept)
+#endif
+		;
 
 	void *instance_;
 	function_pointer function;
@@ -57,19 +71,19 @@ public:
 	BoundMethod() = default;
 
 	constexpr
-	BoundMethod(void *_instance, function_pointer _function)
+	BoundMethod(void *_instance, function_pointer _function) noexcept
 		:instance_(_instance), function(_function) {}
 
 	/**
 	 * Construct an "undefined" object.  It must not be called,
 	 * and its "bool" operator returns false.
 	 */
-	BoundMethod(std::nullptr_t):function(nullptr) {}
+	BoundMethod(std::nullptr_t) noexcept:function(nullptr) {}
 
 	/**
 	 * Was this object initialized with a valid function pointer?
 	 */
-	operator bool() const {
+	operator bool() const noexcept {
 		return function != nullptr;
 	}
 
@@ -91,9 +105,21 @@ namespace BindMethodDetail {
 template<typename T, typename S>
 struct MethodWithSignature;
 
-template<typename T, typename R, typename... Args>
-struct MethodWithSignature<T, R(Args...)> {
-	typedef R (T::*method_pointer)(Args...);
+template<typename T,
+#if !GCC_OLDER_THAN(7,0)
+	 bool NoExcept,
+#endif
+	 typename R, typename... Args>
+struct MethodWithSignature<T, R(Args...)
+#if !GCC_OLDER_THAN(7,0)
+			   noexcept(NoExcept)
+#endif
+			   > {
+	typedef R (T::*method_pointer)(Args...)
+#if !GCC_OLDER_THAN(7,0)
+		noexcept(NoExcept)
+#endif
+		;
 };
 
 /**
@@ -104,8 +130,12 @@ struct MethodWithSignature<T, R(Args...)> {
 template<typename M>
 struct MethodSignatureHelper;
 
-template<typename R, typename T, typename... Args>
-struct MethodSignatureHelper<R (T::*)(Args...)> {
+template<typename R,
+#if !GCC_OLDER_THAN(7,0)
+	 bool NoExcept,
+#endif
+	 typename T, typename... Args>
+struct MethodSignatureHelper<R (T::*)(Args...) noexcept(NoExcept)> {
 	/**
 	 * The class which contains the given method (signature).
 	 */
@@ -115,7 +145,11 @@ struct MethodSignatureHelper<R (T::*)(Args...)> {
 	 * A function type which describes the "plain" function
 	 * signature.
 	 */
-	typedef R plain_signature(Args...);
+	typedef R plain_signature(Args...)
+#if !GCC_OLDER_THAN(7,0)
+		noexcept(NoExcept)
+#endif
+		;
 };
 
 /**
@@ -125,9 +159,17 @@ struct MethodSignatureHelper<R (T::*)(Args...)> {
 template<typename S>
 struct MethodWrapperWithSignature;
 
-template<typename R, typename... Args>
-struct MethodWrapperWithSignature<R(Args...)> {
-	typedef R (*function_pointer)(void *instance, Args...);
+template<typename R,
+#if !GCC_OLDER_THAN(7,0)
+	 bool NoExcept,
+#endif
+	 typename... Args>
+struct MethodWrapperWithSignature<R(Args...) noexcept(NoExcept)> {
+	typedef R (*function_pointer)(void *instance, Args...)
+#if !GCC_OLDER_THAN(7,0)
+		noexcept(NoExcept)
+#endif
+		;
 };
 
 /**
@@ -140,9 +182,9 @@ struct MethodWrapperWithSignature<R(Args...)> {
  * @param R the return type
  * @param Args the method arguments
  */
-template<typename T, typename M, M method, typename R, typename... Args>
+template<typename T, bool NoExcept, typename M, M method, typename R, typename... Args>
 struct BindMethodWrapperGenerator2 {
-	static R Invoke(void *_instance, Args... args) {
+	static R Invoke(void *_instance, Args... args) noexcept(NoExcept) {
 		auto &t = *(T *)_instance;
 		return (t.*method)(std::forward<Args>(args)...);
 	}
@@ -159,17 +201,101 @@ struct BindMethodWrapperGenerator2 {
 template<typename T, typename M, M method, typename S>
 struct BindMethodWrapperGenerator;
 
-template<typename T, typename M, M method, typename R, typename... Args>
-struct BindMethodWrapperGenerator<T, M, method, R(Args...)>
-	: BindMethodWrapperGenerator2<T, M, method, R, Args...> {
+template<typename T,
+#if !GCC_OLDER_THAN(7,0)
+	 bool NoExcept,
+#endif
+	 typename M, M method, typename R, typename... Args>
+struct BindMethodWrapperGenerator<T, M, method, R(Args...) noexcept(NoExcept)>
+	: BindMethodWrapperGenerator2<T, NoExcept, M, method, R, Args...> {
 };
 
 template<typename T, typename S,
 	 typename MethodWithSignature<T, S>::method_pointer method>
 typename MethodWrapperWithSignature<S>::function_pointer
-MakeBindMethodWrapper()
+MakeBindMethodWrapper() noexcept
 {
 	return BindMethodWrapperGenerator<T, typename MethodWithSignature<T, S>::method_pointer, method, S>::Invoke;
+}
+
+/**
+ * Helper class which introspects a function pointer type.
+ *
+ * @param S the function type
+ */
+template<typename S>
+struct FunctionTraits;
+
+template<typename R,
+#if !GCC_OLDER_THAN(7,0)
+	 bool NoExcept,
+#endif
+	 typename... Args>
+struct FunctionTraits<R(Args...) noexcept(NoExcept)> {
+	/**
+	 * A function type which describes the "plain" function
+	 * signature.
+	 */
+	typedef R function_type(Args...)
+#if !GCC_OLDER_THAN(7,0)
+		noexcept(NoExcept)
+#endif
+		;
+
+	/**
+	 * A function pointer type which describes the "plain"
+	 * function signature.
+	 */
+	typedef R (*pointer_type)(Args...)
+#if !GCC_OLDER_THAN(7,0)
+		noexcept(NoExcept)
+#endif
+		;
+};
+
+/**
+ * Generate a wrapper function for a plain function which ignores the
+ * instance pointer.  Helper class for
+ * #BindFunctionWrapperGenerator.
+ *
+ * @param F the function pointer type
+ * @param function the function pointer
+ * @param R the return type
+ * @param Args the function arguments
+ */
+template<bool NoExcept, typename F, F function, typename R, typename... Args>
+struct BindFunctionWrapperGenerator2 {
+	static R Invoke(void *, Args... args) noexcept(NoExcept) {
+		return function(std::forward<Args>(args)...);
+	}
+};
+
+/**
+ * Generate a wrapper function.
+ *
+ * @param S the plain function signature type
+ * @param P the plain function pointer type
+ * @param function the function pointer
+ */
+template<typename S, typename P, P function>
+struct BindFunctionWrapperGenerator;
+
+template<typename P, P function,
+#if !GCC_OLDER_THAN(7,0)
+	 bool NoExcept,
+#endif
+	 typename R, typename... Args>
+struct BindFunctionWrapperGenerator<R(Args...) noexcept(NoExcept), P, function>
+	: BindFunctionWrapperGenerator2<NoExcept, P, function, R, Args...> {
+};
+
+template<typename T, typename T::pointer_type function>
+typename MethodWrapperWithSignature<typename T::function_type>::function_pointer
+MakeBindFunctionWrapper() noexcept
+{
+	return BindFunctionWrapperGenerator<typename T::function_type,
+					    typename T::pointer_type,
+					    function>::Invoke;
 }
 
 } /* namespace BindMethodDetail */
@@ -185,7 +311,7 @@ MakeBindMethodWrapper()
 template<typename T, typename S,
 	 typename BindMethodDetail::MethodWithSignature<T, S>::method_pointer method>
 constexpr BoundMethod<S>
-BindMethod(T &_instance)
+BindMethod(T &_instance) noexcept
 {
 	return BoundMethod<S>(&_instance,
 			      BindMethodDetail::MakeBindMethodWrapper<T, S, method>());
@@ -205,5 +331,26 @@ BindMethod(T &_instance)
  * instance to be bound.
  */
 #define BIND_THIS_METHOD(method) BIND_METHOD(*this, &std::remove_reference<decltype(*this)>::type::method)
+
+/**
+ * Construct a #BoundMethod instance for a plain function.
+ *
+ * @param T the #FunctionTraits class
+ * @param function the function pointer
+ */
+template<typename T, typename T::pointer_type function>
+constexpr BoundMethod<typename T::function_type>
+BindFunction() noexcept
+{
+	return BoundMethod<typename T::function_type>(nullptr,
+						      BindMethodDetail::MakeBindFunctionWrapper<T, function>());
+}
+
+/**
+ * Shortcut macro which takes a function pointer and constructs a
+ * #BoundMethod instance.
+ */
+#define BIND_FUNCTION(function) \
+	BindFunction<typename BindMethodDetail::FunctionTraits<decltype(function)>, &function>()
 
 #endif

@@ -1,5 +1,5 @@
 /*
- * Copyright 2003-2016 The Music Player Daemon Project
+ * Copyright 2003-2019 The Music Player Daemon Project
  * http://www.musicpd.org
  *
  * This program is free software; you can redistribute it and/or modify
@@ -34,13 +34,11 @@
 #include "plugins/PipeOutputPlugin.hxx"
 #include "plugins/PulseOutputPlugin.hxx"
 #include "plugins/RecorderOutputPlugin.hxx"
-#include "plugins/RoarOutputPlugin.hxx"
 #include "plugins/ShoutOutputPlugin.hxx"
 #include "plugins/sles/SlesOutputPlugin.hxx"
 #include "plugins/SolarisOutputPlugin.hxx"
 #include "plugins/WinmmOutputPlugin.hxx"
-
-#include <string.h>
+#include "util/StringAPI.hxx"
 
 const AudioOutputPlugin *const audio_output_plugins[] = {
 #ifdef HAVE_SHOUT
@@ -53,10 +51,10 @@ const AudioOutputPlugin *const audio_output_plugins[] = {
 #ifdef HAVE_FIFO
 	&fifo_output_plugin,
 #endif
-#ifdef HAVE_SNDIO
+#ifdef ENABLE_SNDIO
 	&sndio_output_plugin,
 #endif
-#ifdef HAVE_HAIKU
+#ifdef ENABLE_HAIKU
 	&haiku_output_plugin,
 #endif
 #ifdef ENABLE_PIPE_OUTPUT
@@ -64,9 +62,6 @@ const AudioOutputPlugin *const audio_output_plugins[] = {
 #endif
 #ifdef ENABLE_ALSA
 	&alsa_output_plugin,
-#endif
-#ifdef ENABLE_ROAR
-	&roar_output_plugin,
 #endif
 #ifdef ENABLE_AO
 	&ao_output_plugin,
@@ -105,7 +100,7 @@ const AudioOutputPlugin *
 AudioOutputPlugin_get(const char *name)
 {
 	audio_output_plugins_for_each(plugin)
-		if (strcmp(plugin->name, name) == 0)
+		if (StringIsEqual(plugin->name, name))
 			return plugin;
 
 	return nullptr;

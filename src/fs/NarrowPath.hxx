@@ -1,5 +1,5 @@
 /*
- * Copyright 2003-2016 The Music Player Daemon Project
+ * Copyright 2003-2019 The Music Player Daemon Project
  * http://www.musicpd.org
  *
  * This program is free software; you can redistribute it and/or modify
@@ -20,9 +20,7 @@
 #ifndef MPD_FS_NARROW_PATH_HXX
 #define MPD_FS_NARROW_PATH_HXX
 
-#include "check.h"
 #include "Path.hxx"
-#include "util/Macros.hxx"
 
 #ifdef _UNICODE
 #include "lib/icu/Win32.hxx"

@@ -1,5 +1,5 @@
 /*
- * Copyright 2003-2016 The Music Player Daemon Project
+ * Copyright 2003-2019 The Music Player Daemon Project
  * http://www.musicpd.org
  *
  * This program is free software; you can redistribute it and/or modify
@@ -20,10 +20,9 @@
 #ifndef MPD_TAG_STREAM_HXX
 #define MPD_TAG_STREAM_HXX
 
-#include "check.h"
-
+struct AudioFormat;
 class InputStream;
-struct TagHandler;
+class TagHandler;
 class TagBuilder;
 
 /**
@@ -34,10 +33,13 @@ class TagBuilder;
  * found)
  */
 bool
-tag_stream_scan(InputStream &is, const TagHandler &handler, void *ctx);
+tag_stream_scan(InputStream &is, TagHandler &handler) noexcept;
 
+/**
+ * Throws on error.
+ */
 bool
-tag_stream_scan(const char *uri, const TagHandler &handler, void *ctx);
+tag_stream_scan(const char *uri, TagHandler &handler);
 
 /**
  * Scan the tags of an #InputStream.  Invokes matching decoder
@@ -48,9 +50,14 @@ tag_stream_scan(const char *uri, const TagHandler &handler, void *ctx);
  * found)
  */
 bool
-tag_stream_scan(InputStream &is, TagBuilder &builder);
+tag_stream_scan(InputStream &is, TagBuilder &builder,
+		AudioFormat *audio_format=nullptr) noexcept;
 
+/**
+ * Throws on error.
+ */
 bool
-tag_stream_scan(const char *uri, TagBuilder &builder);
+tag_stream_scan(const char *uri, TagBuilder &builder,
+		AudioFormat *audio_format=nullptr);
 
 #endif

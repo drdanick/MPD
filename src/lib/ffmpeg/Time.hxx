@@ -1,5 +1,5 @@
 /*
- * Copyright 2003-2016 The Music Player Daemon Project
+ * Copyright 2003-2019 The Music Player Daemon Project
  * http://www.musicpd.org
  *
  * This program is free software; you can redistribute it and/or modify
@@ -21,7 +21,7 @@
 #define MPD_FFMPEG_TIME_HXX
 
 #include "Chrono.hxx"
-#include "Compiler.h"
+#include "util/Compiler.h"
 
 extern "C" {
 #include <libavutil/avutil.h>
@@ -40,20 +40,20 @@ extern "C" {
  * Convert a FFmpeg time stamp to a floating point value (in seconds).
  */
 gcc_const
-static inline double
-FfmpegTimeToDouble(int64_t t, const AVRational time_base)
+static inline FloatDuration
+FfmpegTimeToDouble(int64_t t, const AVRational time_base) noexcept
 {
 	assert(t != (int64_t)AV_NOPTS_VALUE);
 
-	return (double)av_rescale_q(t, time_base, (AVRational){1, 1024})
-		/ (double)1024;
+	return FloatDuration(av_rescale_q(t, time_base, (AVRational){1, 1024}))
+		/ 1024;
 }
 
 /**
  * Convert a std::ratio to a #AVRational.
  */
 template<typename Ratio>
-static inline constexpr AVRational
+constexpr AVRational
 RatioToAVRational()
 {
 	return { Ratio::num, Ratio::den };
@@ -64,7 +64,7 @@ RatioToAVRational()
  */
 gcc_const
 static inline SongTime
-FromFfmpegTime(int64_t t, const AVRational time_base)
+FromFfmpegTime(int64_t t, const AVRational time_base) noexcept
 {
 	assert(t != (int64_t)AV_NOPTS_VALUE);
 
@@ -77,7 +77,7 @@ FromFfmpegTime(int64_t t, const AVRational time_base)
  */
 gcc_const
 static inline SignedSongTime
-FromFfmpegTimeChecked(int64_t t, const AVRational time_base)
+FromFfmpegTimeChecked(int64_t t, const AVRational time_base) noexcept
 {
 	return t != (int64_t)AV_NOPTS_VALUE
 		? SignedSongTime(FromFfmpegTime(t, time_base))
@@ -89,7 +89,7 @@ FromFfmpegTimeChecked(int64_t t, const AVRational time_base)
  */
 gcc_const
 static inline int64_t
-ToFfmpegTime(SongTime t, const AVRational time_base)
+ToFfmpegTime(SongTime t, const AVRational time_base) noexcept
 {
 	return av_rescale_q(t.count(),
 			    RatioToAVRational<SongTime::period>(),
@@ -99,7 +99,7 @@ ToFfmpegTime(SongTime t, const AVRational time_base)
 /**
  * Replace #AV_NOPTS_VALUE with the given fallback.
  */
-static constexpr int64_t
+constexpr int64_t
 FfmpegTimestampFallback(int64_t t, int64_t fallback)
 {
 	return gcc_likely(t != int64_t(AV_NOPTS_VALUE))

@@ -1,5 +1,5 @@
 /*
- * Copyright 2003-2016 The Music Player Daemon Project
+ * Copyright 2003-2019 The Music Player Daemon Project
  * http://www.musicpd.org
  *
  * This program is free software; you can redistribute it and/or modify
@@ -29,10 +29,9 @@
 #include "input/Reader.hxx"
 #include "OggCodec.hxx"
 #include "pcm/Interleave.hxx"
-#include "util/Macros.hxx"
 #include "util/ScopeExit.hxx"
 #include "CheckAudioFormat.hxx"
-#include "tag/TagHandler.hxx"
+#include "tag/Handler.hxx"
 #include "Log.hxx"
 
 #ifndef HAVE_TREMOR
@@ -41,6 +40,7 @@
 #include <tremor/ivorbiscodec.h>
 #endif /* HAVE_TREMOR */
 
+#include <iterator>
 #include <stdexcept>
 
 class VorbisDecoder final : public OggDecoder {
@@ -81,6 +81,14 @@ public:
 	}
 
 	bool Seek(uint64_t where_frame);
+
+	static AudioFormat CheckAudioFormat(const vorbis_info &vi) {
+		return ::CheckAudioFormat(vi.rate, sample_format, vi.channels);
+	}
+
+	AudioFormat CheckAudioFormat() const {
+		return CheckAudioFormat(vi);
+	}
 
 private:
 	void InitVorbis() {
@@ -129,7 +137,7 @@ VorbisDecoder::Seek(uint64_t where_frame)
 		SeekGranulePos(where_granulepos);
 		vorbis_synthesis_restart(&dsp);
 		return true;
-	} catch (const std::runtime_error &) {
+	} catch (...) {
 		return false;
 	}
 }
@@ -149,15 +157,14 @@ VorbisDecoder::OnOggBeginning(const ogg_packet &_packet)
 }
 
 static void
-vorbis_send_comments(DecoderClient &client, InputStream &is,
-		     char **comments)
+SubmitVorbisComment(DecoderClient &client, InputStream &is,
+		    const vorbis_comment &vc)
 {
-	Tag *tag = vorbis_comments_to_tag(comments);
+	auto tag = VorbisCommentToTag(vc);
 	if (!tag)
 		return;
 
 	client.SubmitTag(is, std::move(*tag));
-	delete tag;
 }
 
 void
@@ -165,7 +172,7 @@ VorbisDecoder::SubmitInit()
 {
 	assert(!dsp_initialized);
 
-	audio_format = CheckAudioFormat(vi.rate, sample_format, vi.channels);
+	audio_format = CheckAudioFormat(vi);
 
 	frame_size = audio_format.GetFrameSize();
 
@@ -178,6 +185,20 @@ VorbisDecoder::SubmitInit()
 	client.Ready(audio_format, eos_granulepos > 0, duration);
 }
 
+#ifdef HAVE_TREMOR
+static inline int16_t tremor_clip_sample(int32_t x)
+{
+	x >>= 9;
+
+	if (x < INT16_MIN)
+		return INT16_MIN;
+	if (x > INT16_MAX)
+		return INT16_MAX;
+
+	return x;
+}
+#endif
+
 bool
 VorbisDecoder::SubmitSomePcm()
 {
@@ -188,7 +209,7 @@ VorbisDecoder::SubmitSomePcm()
 
 	out_sample_t buffer[4096];
 	const unsigned channels = audio_format.channels;
-	size_t max_frames = ARRAY_SIZE(buffer) / channels;
+	size_t max_frames = std::size(buffer) / channels;
 	size_t n_frames = std::min(size_t(result), max_frames);
 
 #ifdef HAVE_TREMOR
@@ -197,7 +218,7 @@ VorbisDecoder::SubmitSomePcm()
 		auto *dest = &buffer[c];
 
 		for (size_t i = 0; i < n_frames; ++i) {
-			*dest = *src++;
+			*dest = tremor_clip_sample(*src++);
 			dest += channels;
 		}
 	}
@@ -248,10 +269,10 @@ VorbisDecoder::OnOggPacket(const ogg_packet &_packet)
 		} else
 			SubmitInit();
 
-		vorbis_send_comments(client, input_stream, vc.user_comments);
+		SubmitVorbisComment(client, input_stream, vc);
 
 		ReplayGainInfo rgi;
-		if (vorbis_comments_to_replay_gain(rgi, vc.user_comments))
+		if (VorbisCommentToReplayGain(rgi, vc))
 			client.SubmitReplayGain(&rgi);
 	} else {
 		if (!dsp_initialized) {
@@ -277,7 +298,7 @@ VorbisDecoder::OnOggPacket(const ogg_packet &_packet)
 
 #ifndef HAVE_TREMOR
 		if (packet.granulepos > 0)
-			client.SubmitTimestamp(vorbis_granule_time(&dsp, packet.granulepos));
+			client.SubmitTimestamp(FloatDuration(vorbis_granule_time(&dsp, packet.granulepos)));
 #endif
 	}
 }
@@ -309,7 +330,7 @@ vorbis_stream_decode(DecoderClient &client,
 	   moved it */
 	try {
 		input_stream.LockRewind();
-	} catch (const std::runtime_error &) {
+	} catch (...) {
 	}
 
 	DecoderReader reader(client, input_stream);
@@ -335,7 +356,7 @@ static void
 VisitVorbisDuration(InputStream &is,
 		    OggSyncState &sync, OggStreamState &stream,
 		    unsigned sample_rate,
-		    const TagHandler &handler, void *handler_ctx)
+		    TagHandler &handler) noexcept
 {
 	ogg_packet packet;
 
@@ -345,12 +366,11 @@ VisitVorbisDuration(InputStream &is,
 	const auto duration =
 		SongTime::FromScale<uint64_t>(packet.granulepos,
 					      sample_rate);
-	tag_handler_invoke_duration(handler, handler_ctx, duration);
+	handler.OnDuration(duration);
 }
 
 static bool
-vorbis_scan_stream(InputStream &is,
-		   const TagHandler &handler, void *handler_ctx)
+vorbis_scan_stream(InputStream &is, TagHandler &handler) noexcept
 {
 	/* initialize libogg */
 
@@ -384,12 +404,16 @@ vorbis_scan_stream(InputStream &is,
 
 	/* visit the Vorbis comments we just read */
 
-	vorbis_comments_scan(vc.user_comments,
-			     handler, handler_ctx);
+	VorbisCommentScan(vc, handler);
 
 	/* check the song duration by locating the e_o_s packet */
 
-	VisitVorbisDuration(is, sync, stream, vi.rate, handler, handler_ctx);
+	VisitVorbisDuration(is, sync, stream, vi.rate, handler);
+
+	try {
+		handler.OnAudioFormat(VorbisDecoder::CheckAudioFormat(vi));
+	} catch (...) {
+	}
 
 	return true;
 }
@@ -410,15 +434,8 @@ static const char *const vorbis_mime_types[] = {
 	nullptr
 };
 
-const struct DecoderPlugin vorbis_decoder_plugin = {
-	"vorbis",
-	vorbis_init,
-	nullptr,
-	vorbis_stream_decode,
-	nullptr,
-	nullptr,
-	vorbis_scan_stream,
-	nullptr,
-	vorbis_suffixes,
-	vorbis_mime_types
-};
+constexpr DecoderPlugin vorbis_decoder_plugin =
+	DecoderPlugin("vorbis", vorbis_stream_decode, vorbis_scan_stream)
+	.WithInit(vorbis_init)
+	.WithSuffixes(vorbis_suffixes)
+	.WithMimeTypes(vorbis_mime_types);

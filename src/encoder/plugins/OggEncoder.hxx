@@ -1,5 +1,5 @@
 /*
- * Copyright 2003-2016 The Music Player Daemon Project
+ * Copyright 2003-2019 The Music Player Daemon Project
  * http://www.musicpd.org
  *
  * This program is free software; you can redistribute it and/or modify
@@ -20,7 +20,6 @@
 #ifndef MPD_OGG_ENCODER_HXX
 #define MPD_OGG_ENCODER_HXX
 
-#include "config.h"
 #include "../EncoderAPI.hxx"
 #include "lib/xiph/OggStreamState.hxx"
 #include "lib/xiph/OggPage.hxx"
@@ -51,7 +50,7 @@ public:
 		flush = true;
 	}
 
-	size_t Read(void *dest, size_t length) override {
+	size_t Read(void *dest, size_t length) noexcept override {
 		ogg_page page;
 		bool success = stream.PageOut(page);
 		if (!success) {

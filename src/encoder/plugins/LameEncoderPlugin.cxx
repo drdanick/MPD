@@ -1,5 +1,5 @@
 /*
- * Copyright 2003-2016 The Music Player Daemon Project
+ * Copyright 2003-2019 The Music Player Daemon Project
  * http://www.musicpd.org
  *
  * This program is free software; you can redistribute it and/or modify
@@ -17,11 +17,9 @@
  * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
  */
 
-#include "config.h"
 #include "LameEncoderPlugin.hxx"
 #include "../EncoderAPI.hxx"
 #include "AudioFormat.hxx"
-#include "config/ConfigError.hxx"
 #include "util/NumberParser.hxx"
 #include "util/ReusableArray.hxx"
 #include "util/RuntimeError.hxx"
@@ -43,15 +41,15 @@ class LameEncoder final : public Encoder {
 
 public:
 	LameEncoder(const AudioFormat _audio_format,
-		    lame_global_flags *_gfp)
+		    lame_global_flags *_gfp) noexcept
 		:Encoder(false),
 		 audio_format(_audio_format), gfp(_gfp) {}
 
-	~LameEncoder() override;
+	~LameEncoder() noexcept override;
 
 	/* virtual methods from class Encoder */
 	void Write(const void *data, size_t length) override;
-	size_t Read(void *dest, size_t length) override;
+	size_t Read(void *dest, size_t length) noexcept override;
 };
 
 class PreparedLameEncoder final : public PreparedEncoder {
@@ -64,7 +62,7 @@ public:
 	/* virtual methods from class PreparedEncoder */
 	Encoder *Open(AudioFormat &audio_format) override;
 
-	const char *GetMimeType() const override {
+	const char *GetMimeType() const noexcept override {
 		return "audio/mpeg";
 	}
 };
@@ -160,7 +158,7 @@ PreparedLameEncoder::Open(AudioFormat &audio_format)
 	return new LameEncoder(audio_format, gfp);
 }
 
-LameEncoder::~LameEncoder()
+LameEncoder::~LameEncoder() noexcept
 {
 	lame_close(gfp);
 }
@@ -194,7 +192,7 @@ LameEncoder::Write(const void *data, size_t length)
 }
 
 size_t
-LameEncoder::Read(void *dest, size_t length)
+LameEncoder::Read(void *dest, size_t length) noexcept
 {
 	const auto begin = output_begin;
 	assert(begin <= output_end);

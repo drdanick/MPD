@@ -1,5 +1,5 @@
 /*
- * Copyright 2003-2016 The Music Player Daemon Project
+ * Copyright 2003-2019 The Music Player Daemon Project
  * http://www.musicpd.org
  *
  * This program is free software; you can redistribute it and/or modify
@@ -24,8 +24,10 @@
 #include "plugins/Bzip2ArchivePlugin.hxx"
 #include "plugins/Iso9660ArchivePlugin.hxx"
 #include "plugins/ZzipArchivePlugin.hxx"
-#include "util/Macros.hxx"
 
+#include <iterator>
+
+#include <assert.h>
 #include <string.h>
 
 const ArchivePlugin *const archive_plugins[] = {
@@ -42,17 +44,16 @@ const ArchivePlugin *const archive_plugins[] = {
 };
 
 /** which plugins have been initialized successfully? */
-static bool archive_plugins_enabled[ARRAY_SIZE(archive_plugins) - 1];
+static bool archive_plugins_enabled[std::size(archive_plugins) - 1];
 
 #define archive_plugins_for_each_enabled(plugin) \
 	archive_plugins_for_each(plugin) \
 		if (archive_plugins_enabled[archive_plugin_iterator - archive_plugins])
 
 const ArchivePlugin *
-archive_plugin_from_suffix(const char *suffix)
+archive_plugin_from_suffix(const char *suffix) noexcept
 {
-	if (suffix == nullptr)
-		return nullptr;
+	assert(suffix != nullptr);
 
 	archive_plugins_for_each_enabled(plugin)
 		if (plugin->suffixes != nullptr &&
@@ -63,7 +64,7 @@ archive_plugin_from_suffix(const char *suffix)
 }
 
 const ArchivePlugin *
-archive_plugin_from_name(const char *name)
+archive_plugin_from_name(const char *name) noexcept
 {
 	archive_plugins_for_each_enabled(plugin)
 		if (strcmp(plugin->name, name) == 0)
@@ -81,7 +82,8 @@ void archive_plugin_init_all(void)
 	}
 }
 
-void archive_plugin_deinit_all(void)
+void
+archive_plugin_deinit_all() noexcept
 {
 	archive_plugins_for_each_enabled(plugin)
 		if (plugin->finish != nullptr)

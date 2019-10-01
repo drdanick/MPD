@@ -1,5 +1,5 @@
 /*
- * Copyright 2003-2016 The Music Player Daemon Project
+ * Copyright 2003-2019 The Music Player Daemon Project
  * http://www.musicpd.org
  *
  * This program is free software; you can redistribute it and/or modify
@@ -17,17 +17,14 @@
  * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
  */
 
-#include "config.h"
 #include "PulseOutputPlugin.hxx"
-#include "lib/pulse/Domain.hxx"
 #include "lib/pulse/Error.hxx"
 #include "lib/pulse/LogError.hxx"
 #include "lib/pulse/LockGuard.hxx"
 #include "../OutputAPI.hxx"
-#include "../Wrapper.hxx"
 #include "mixer/MixerList.hxx"
 #include "mixer/plugins/PulseMixerPlugin.hxx"
-#include "Log.hxx"
+#include "util/ScopeExit.hxx"
 
 #include <pulse/thread-mainloop.h>
 #include <pulse/context.h>
@@ -44,14 +41,11 @@
 
 #define MPD_PULSE_NAME "Music Player Daemon"
 
-class PulseOutput {
-	friend struct AudioOutputWrapper<PulseOutput>;
-
-	AudioOutput base;
-
+class PulseOutput final : AudioOutput {
 	const char *name;
 	const char *server;
 	const char *sink;
+	const char *const media_role;
 
 	PulseMixer *mixer = nullptr;
 
@@ -60,6 +54,8 @@ class PulseOutput {
 	struct pa_stream *stream = nullptr;
 
 	size_t writable;
+
+	bool pause;
 
 	explicit PulseOutput(const ConfigBlock &block);
 
@@ -90,27 +86,29 @@ public:
 		Signal();
 	}
 
-	gcc_const
 	static bool TestDefaultDevice();
 
-	static PulseOutput *Create(const ConfigBlock &block);
+	static AudioOutput *Create(EventLoop &,
+				   const ConfigBlock &block) {
+		return new PulseOutput(block);
+	}
 
-	void Enable();
-	void Disable();
+	void Enable() override;
+	void Disable() noexcept override;
 
-	void Open(AudioFormat &audio_format);
-	void Close();
+	void Open(AudioFormat &audio_format) override;
+	void Close() noexcept override;
 
-	unsigned Delay();
-	size_t Play(const void *chunk, size_t size);
-	void Cancel();
-	bool Pause();
+	std::chrono::steady_clock::duration Delay() const noexcept override;
+	size_t Play(const void *chunk, size_t size) override;
+	void Cancel() noexcept override;
+	bool Pause() override;
 
 private:
 	/**
 	 * Attempt to connect asynchronously to the PulseAudio server.
 	 *
-	 * Throws #std::runtime_error on error.
+	 * Throws on error.
 	 */
 	void Connect();
 
@@ -119,7 +117,7 @@ private:
 	 *
 	 * Caller must lock the main loop.
 	 *
-	 * Throws #std::runtime_error on error.
+	 * Throws on error.
 	 */
 	void SetupContext();
 
@@ -141,7 +139,7 @@ private:
 	 *
 	 * Caller must lock the main loop.
 	 *
-	 * Throws #std::runtime_error on error.
+	 * Throws on error.
 	 */
 	void WaitConnection();
 
@@ -150,7 +148,7 @@ private:
 	 *
 	 * Caller must lock the main loop.
 	 *
-	 * Throws #std::runtime_error on error.
+	 * Throws on error.
 	 */
 	void SetupStream(const pa_sample_spec &ss);
 
@@ -164,23 +162,24 @@ private:
 	 * not.  The mainloop must be locked before calling this
 	 * function.
 	 *
-	 * Throws #std::runtime_error on error.
+	 * Throws on error.
 	 */
 	void WaitStream();
 
 	/**
 	 * Sets cork mode on the stream.
 	 *
-	 * Throws #std::runtime_error on error.
+	 * Throws on error.
 	 */
 	void StreamPause(bool pause);
 };
 
 PulseOutput::PulseOutput(const ConfigBlock &block)
-	:base(pulse_output_plugin, block),
+	:AudioOutput(FLAG_ENABLE_DISABLE|FLAG_PAUSE),
 	 name(block.GetBlockValue("name", "mpd_pulse")),
 	 server(block.GetBlockValue("server")),
-	 sink(block.GetBlockValue("sink"))
+	 sink(block.GetBlockValue("sink")),
+	 media_role(block.GetBlockValue("media_role"))
 {
 	setenv("PULSE_PROP_media.role", "music", true);
 	setenv("PULSE_PROP_application.icon_name", "mpd", true);
@@ -396,8 +395,16 @@ PulseOutput::SetupContext()
 {
 	assert(mainloop != nullptr);
 
-	context = pa_context_new(pa_threaded_mainloop_get_api(mainloop),
-				 MPD_PULSE_NAME);
+	pa_proplist *proplist = pa_proplist_new();
+	if (media_role)
+		pa_proplist_sets(proplist, PA_PROP_MEDIA_ROLE, media_role);
+
+	context = pa_context_new_with_proplist(pa_threaded_mainloop_get_api(mainloop),
+					       MPD_PULSE_NAME,
+					       proplist);
+
+	pa_proplist_free(proplist);
+
 	if (context == nullptr)
 		throw std::runtime_error("pa_context_new() has failed");
 
@@ -414,13 +421,7 @@ PulseOutput::SetupContext()
 	}
 }
 
-PulseOutput *
-PulseOutput::Create(const ConfigBlock &block)
-{
-	return new PulseOutput(block);
-}
-
-inline void
+void
 PulseOutput::Enable()
 {
 	assert(mainloop == nullptr);
@@ -456,8 +457,8 @@ PulseOutput::Enable()
 	pa_threaded_mainloop_unlock(mainloop);
 }
 
-inline void
-PulseOutput::Disable()
+void
+PulseOutput::Disable() noexcept
 {
 	assert(mainloop != nullptr);
 
@@ -588,8 +589,8 @@ PulseOutput::SetupStream(const pa_sample_spec &ss)
 
 	/* WAVE-EX is been adopted as the speaker map for most media files */
 	pa_channel_map chan_map;
-	pa_channel_map_init_auto(&chan_map, ss.channels,
-				 PA_CHANNEL_MAP_WAVEEX);
+	pa_channel_map_init_extend(&chan_map, ss.channels,
+				   PA_CHANNEL_MAP_WAVEEX);
 	stream = pa_stream_new(context, name, &ss, &chan_map);
 	if (stream == nullptr)
 		throw MakePulseError(context,
@@ -605,7 +606,7 @@ PulseOutput::SetupStream(const pa_sample_spec &ss)
 				     pulse_output_stream_write_cb, this);
 }
 
-inline void
+void
 PulseOutput::Open(AudioFormat &audio_format)
 {
 	assert(mainloop != nullptr);
@@ -674,10 +675,12 @@ PulseOutput::Open(AudioFormat &audio_format)
 		throw MakePulseError(context,
 				     "pa_stream_connect_playback() has failed");
 	}
+
+	pause = false;
 }
 
-inline void
-PulseOutput::Close()
+void
+PulseOutput::Close() noexcept
 {
 	assert(mainloop != nullptr);
 
@@ -723,13 +726,13 @@ PulseOutput::WaitStream()
 }
 
 void
-PulseOutput::StreamPause(bool pause)
+PulseOutput::StreamPause(bool _pause)
 {
 	assert(mainloop != nullptr);
 	assert(context != nullptr);
 	assert(stream != nullptr);
 
-	pa_operation *o = pa_stream_cork(stream, pause,
+	pa_operation *o = pa_stream_cork(stream, _pause,
 					 pulse_output_stream_success_cb, this);
 	if (o == nullptr)
 		throw MakePulseError(context,
@@ -740,27 +743,29 @@ PulseOutput::StreamPause(bool pause)
 				     "pa_stream_cork() has failed");
 }
 
-inline unsigned
-PulseOutput::Delay()
+std::chrono::steady_clock::duration
+PulseOutput::Delay() const noexcept
 {
 	Pulse::LockGuard lock(mainloop);
 
-	unsigned result = 0;
-	if (base.pause && pa_stream_is_corked(stream) &&
+	auto result = std::chrono::steady_clock::duration::zero();
+	if (pause && pa_stream_is_corked(stream) &&
 	    pa_stream_get_state(stream) == PA_STREAM_READY)
 		/* idle while paused */
-		result = 1000;
+		result = std::chrono::seconds(1);
 
 	return result;
 }
 
-inline size_t
+size_t
 PulseOutput::Play(const void *chunk, size_t size)
 {
 	assert(mainloop != nullptr);
 	assert(stream != nullptr);
 
 	Pulse::LockGuard lock(mainloop);
+
+	pause = false;
 
 	/* check if the stream is (already) connected */
 
@@ -801,8 +806,8 @@ PulseOutput::Play(const void *chunk, size_t size)
 	return size;
 }
 
-inline void
-PulseOutput::Cancel()
+void
+PulseOutput::Cancel() noexcept
 {
 	assert(mainloop != nullptr);
 	assert(stream != nullptr);
@@ -828,13 +833,15 @@ PulseOutput::Cancel()
 	pulse_wait_for_operation(mainloop, o);
 }
 
-inline bool
+bool
 PulseOutput::Pause()
 {
 	assert(mainloop != nullptr);
 	assert(stream != nullptr);
 
 	Pulse::LockGuard lock(mainloop);
+
+	pause = true;
 
 	/* check if the stream is (already/still) connected */
 
@@ -855,9 +862,12 @@ PulseOutput::TestDefaultDevice()
 try {
 	const ConfigBlock empty;
 	PulseOutput po(empty);
+	po.Enable();
+	AtScopeExit(&po) { po.Disable(); };
 	po.WaitConnection();
+
 	return true;
-} catch (const std::runtime_error &e) {
+} catch (...) {
 	return false;
 }
 
@@ -867,23 +877,9 @@ pulse_output_test_default_device(void)
 	return PulseOutput::TestDefaultDevice();
 }
 
-typedef AudioOutputWrapper<PulseOutput> Wrapper;
-
 const struct AudioOutputPlugin pulse_output_plugin = {
 	"pulse",
 	pulse_output_test_default_device,
-	&Wrapper::Init,
-	&Wrapper::Finish,
-	&Wrapper::Enable,
-	&Wrapper::Disable,
-	&Wrapper::Open,
-	&Wrapper::Close,
-	&Wrapper::Delay,
-	nullptr,
-	&Wrapper::Play,
-	nullptr,
-	&Wrapper::Cancel,
-	&Wrapper::Pause,
-
+	PulseOutput::Create,
 	&pulse_mixer_plugin,
 };

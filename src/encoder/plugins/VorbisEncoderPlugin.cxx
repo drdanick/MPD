@@ -1,5 +1,5 @@
 /*
- * Copyright 2003-2016 The Music Player Daemon Project
+ * Copyright 2003-2019 The Music Player Daemon Project
  * http://www.musicpd.org
  *
  * This program is free software; you can redistribute it and/or modify
@@ -17,12 +17,11 @@
  * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
  */
 
-#include "config.h"
 #include "VorbisEncoderPlugin.hxx"
 #include "OggEncoder.hxx"
 #include "lib/xiph/VorbisComment.hxx"
 #include "AudioFormat.hxx"
-#include "config/ConfigError.hxx"
+#include "config/Domain.hxx"
 #include "util/StringUtil.hxx"
 #include "util/NumberParser.hxx"
 #include "util/RuntimeError.hxx"
@@ -39,7 +38,7 @@ class VorbisEncoder final : public OggEncoder {
 public:
 	VorbisEncoder(float quality, int bitrate, AudioFormat &_audio_format);
 
-	virtual ~VorbisEncoder() {
+	~VorbisEncoder() noexcept override {
 		vorbis_block_clear(&vb);
 		vorbis_dsp_clear(&vd);
 		vorbis_info_clear(&vi);
@@ -62,7 +61,7 @@ private:
 };
 
 class PreparedVorbisEncoder final : public PreparedEncoder {
-	float quality;
+	float quality = 3;
 	int bitrate;
 
 public:
@@ -71,7 +70,7 @@ public:
 	/* virtual methods from class PreparedEncoder */
 	Encoder *Open(AudioFormat &audio_format) override;
 
-	const char *GetMimeType() const override {
+	const char *GetMimeType() const noexcept override {
 		return "audio/ogg";
 	}
 };
@@ -97,7 +96,7 @@ PreparedVorbisEncoder::PreparedVorbisEncoder(const ConfigBlock &block)
 
 		value = block.GetBlockValue("bitrate");
 		if (value == nullptr)
-			throw std::runtime_error("neither bitrate nor quality defined");
+			return;
 
 		quality = -2.0;
 

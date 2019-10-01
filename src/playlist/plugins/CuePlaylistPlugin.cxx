@@ -1,5 +1,5 @@
 /*
- * Copyright 2003-2016 The Music Player Daemon Project
+ * Copyright 2003-2019 The Music Player Daemon Project
  * http://www.musicpd.org
  *
  * This program is free software; you can redistribute it and/or modify
@@ -17,7 +17,6 @@
  * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
  */
 
-#include "config.h"
 #include "CuePlaylistPlugin.hxx"
 #include "../PlaylistPlugin.hxx"
 #include "../SongEnumerator.hxx"
@@ -36,10 +35,10 @@ class CuePlaylist final : public SongEnumerator {
 	virtual std::unique_ptr<DetachedSong> NextSong() override;
 };
 
-static SongEnumerator *
+static std::unique_ptr<SongEnumerator>
 cue_playlist_open_stream(InputStreamPtr &&is)
 {
-	return new CuePlaylist(std::move(is));
+	return std::make_unique<CuePlaylist>(std::move(is));
 }
 
 std::unique_ptr<DetachedSong>
@@ -71,15 +70,8 @@ static const char *const cue_playlist_mime_types[] = {
 	nullptr
 };
 
-const struct playlist_plugin cue_playlist_plugin = {
-	"cue",
-
-	nullptr,
-	nullptr,
-	nullptr,
-	cue_playlist_open_stream,
-
-	nullptr,
-	cue_playlist_suffixes,
-	cue_playlist_mime_types,
-};
+const PlaylistPlugin cue_playlist_plugin =
+	PlaylistPlugin("cue", cue_playlist_open_stream)
+	.WithAsFolder()
+	.WithSuffixes(cue_playlist_suffixes)
+	.WithMimeTypes(cue_playlist_mime_types);

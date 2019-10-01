@@ -17,9 +17,7 @@
 #ifndef _IXMLWRAP_H_INCLUDED_
 #define _IXMLWRAP_H_INCLUDED_
 
-#include <upnp/ixml.h>
-
-#include <string>
+#include <ixml.h>
 
 namespace ixmlwrap {
 	/**
@@ -28,7 +26,7 @@ namespace ixmlwrap {
 	 * contain a text node
 	 */
 	const char *getFirstElementValue(IXML_Document *doc,
-					 const char *name);
+					 const char *name) noexcept;
 
 };
 

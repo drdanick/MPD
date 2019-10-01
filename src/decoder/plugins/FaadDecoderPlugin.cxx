@@ -1,5 +1,5 @@
 /*
- * Copyright 2003-2016 The Music Player Daemon Project
+ * Copyright 2003-2019 The Music Player Daemon Project
  * http://www.musicpd.org
  *
  * This program is free software; you can redistribute it and/or modify
@@ -17,13 +17,12 @@
  * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
  */
 
-#include "config.h"
 #include "FaadDecoderPlugin.hxx"
 #include "../DecoderAPI.hxx"
 #include "../DecoderBuffer.hxx"
 #include "input/InputStream.hxx"
 #include "CheckAudioFormat.hxx"
-#include "tag/TagHandler.hxx"
+#include "tag/Handler.hxx"
 #include "util/ScopeExit.hxx"
 #include "util/ConstBuffer.hxx"
 #include "util/Domain.hxx"
@@ -31,7 +30,7 @@
 
 #include <neaacdec.h>
 
-#include <stdexcept>
+#include <cmath>
 
 #include <assert.h>
 #include <string.h>
@@ -127,7 +126,7 @@ adts_song_duration(DecoderBuffer &buffer)
 
 		if (frames == 0) {
 			auto data = ConstBuffer<uint8_t>::FromVoid(buffer.Read());
-			assert(!data.IsEmpty());
+			assert(!data.empty());
 			assert(frame_length <= data.size);
 
 			sample_rate = adts_sample_rates[(data.data[2] & 0x3c) >> 2];
@@ -196,7 +195,7 @@ faad_song_duration(DecoderBuffer &buffer, InputStream &is)
 
 		try {
 			is.LockSeek(tagsize);
-		} catch (const std::runtime_error &) {
+		} catch (...) {
 		}
 
 		buffer.Clear();
@@ -255,7 +254,7 @@ faad_decoder_init(NeAACDecHandle decoder, DecoderBuffer &buffer,
 		  AudioFormat &audio_format)
 {
 	auto data = ConstBuffer<uint8_t>::FromVoid(buffer.Read());
-	if (data.IsEmpty())
+	if (data.empty())
 		throw std::runtime_error("Empty file");
 
 	uint8_t channels;
@@ -283,7 +282,7 @@ faad_decoder_decode(NeAACDecHandle decoder, DecoderBuffer &buffer,
 		    NeAACDecFrameInfo *frame_info)
 {
 	auto data = ConstBuffer<uint8_t>::FromVoid(buffer.Read());
-	if (data.IsEmpty())
+	if (data.empty())
 		return nullptr;
 
 	return NeAACDecDecode(decoder, frame_info,
@@ -316,7 +315,7 @@ faad_get_file_time(InputStream &is)
 		try {
 			faad_decoder_init(decoder, buffer, audio_format);
 			recognized = true;
-		} catch (const std::runtime_error &e) {
+		} catch (...) {
 		}
 	}
 
@@ -386,9 +385,9 @@ faad_stream_decode(DecoderClient &client, InputStream &is,
 		/* update bit rate and position */
 
 		if (frame_info.samples > 0) {
-			bit_rate = frame_info.bytesconsumed * 8.0 *
-			    frame_info.channels * audio_format.sample_rate /
-			    frame_info.samples / 1000 + 0.5;
+			bit_rate = lround(frame_info.bytesconsumed * 8.0 *
+					  frame_info.channels * audio_format.sample_rate /
+					  frame_info.samples / 1000);
 		}
 
 		/* send PCM samples to MPD */
@@ -414,16 +413,14 @@ faad_stream_decode(DecoderClient &client, InputStream &is)
 }
 
 static bool
-faad_scan_stream(InputStream &is,
-		 const TagHandler &handler, void *handler_ctx)
+faad_scan_stream(InputStream &is, TagHandler &handler) noexcept
 {
 	auto result = faad_get_file_time(is);
 	if (!result.first)
 		return false;
 
 	if (!result.second.IsNegative())
-		tag_handler_invoke_duration(handler, handler_ctx,
-					    SongTime(result.second));
+		handler.OnDuration(SongTime(result.second));
 	return true;
 }
 
@@ -432,15 +429,7 @@ static const char *const faad_mime_types[] = {
 	"audio/aac", "audio/aacp", nullptr
 };
 
-const DecoderPlugin faad_decoder_plugin = {
-	"faad",
-	nullptr,
-	nullptr,
-	faad_stream_decode,
-	nullptr,
-	nullptr,
-	faad_scan_stream,
-	nullptr,
-	faad_suffixes,
-	faad_mime_types,
-};
+constexpr DecoderPlugin faad_decoder_plugin =
+	DecoderPlugin("faad", faad_stream_decode, faad_scan_stream)
+	.WithSuffixes(faad_suffixes)
+	.WithMimeTypes(faad_mime_types);

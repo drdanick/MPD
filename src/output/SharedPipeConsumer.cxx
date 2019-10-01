@@ -1,5 +1,5 @@
 /*
- * Copyright 2003-2016 The Music Player Daemon Project
+ * Copyright 2003-2019 The Music Player Daemon Project
  * http://www.musicpd.org
  *
  * This program is free software; you can redistribute it and/or modify
@@ -17,13 +17,12 @@
  * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
  */
 
-#include "config.h"
 #include "SharedPipeConsumer.hxx"
 #include "MusicChunk.hxx"
 #include "MusicPipe.hxx"
 
 const MusicChunk *
-SharedPipeConsumer::Get()
+SharedPipeConsumer::Get() noexcept
 {
 	if (chunk != nullptr) {
 		if (!consumed)
@@ -33,7 +32,7 @@ SharedPipeConsumer::Get()
 			return nullptr;
 
 		consumed = false;
-		return chunk = chunk->next;
+		return chunk = chunk->next.get();
 	} else {
 		/* get the first chunk from the pipe */
 		consumed = false;
@@ -42,7 +41,7 @@ SharedPipeConsumer::Get()
 }
 
 bool
-SharedPipeConsumer::IsConsumed(const MusicChunk &_chunk) const
+SharedPipeConsumer::IsConsumed(const MusicChunk &_chunk) const noexcept
 {
 	if (chunk == nullptr)
 		return false;

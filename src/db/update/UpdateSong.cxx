@@ -1,5 +1,5 @@
 /*
- * Copyright 2003-2016 The Music Player Daemon Project
+ * Copyright 2003-2019 The Music Player Daemon Project
  * http://www.musicpd.org
  *
  * This program is free software; you can redistribute it and/or modify
@@ -17,7 +17,6 @@
  * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
  */
 
-#include "config.h" /* must be first for large file support */
 #include "Walk.hxx"
 #include "UpdateIO.hxx"
 #include "UpdateDomain.hxx"
@@ -33,8 +32,8 @@
 inline void
 UpdateWalk::UpdateSongFile2(Directory &directory,
 			    const char *name, const char *suffix,
-			    const StorageFileInfo &info)
-{
+			    const StorageFileInfo &info) noexcept
+try {
 	Song *song;
 	{
 		const ScopeDatabaseLock protect;
@@ -51,8 +50,7 @@ UpdateWalk::UpdateSongFile2(Directory &directory,
 		return;
 	}
 
-	if (!(song != nullptr && info.mtime == song->mtime &&
-	      !walk_discard) &&
+	if (!(song != nullptr && info.mtime == song->mtime && !walk_discard) &&
 	    UpdateContainerFile(directory, name, suffix, info)) {
 		if (song != nullptr)
 			editor.LockDeleteSong(directory, song);
@@ -63,8 +61,9 @@ UpdateWalk::UpdateSongFile2(Directory &directory,
 	if (song == nullptr) {
 		FormatDebug(update_domain, "reading %s/%s",
 			    directory.GetPath(), name);
-		song = Song::LoadFile(storage, name, directory);
-		if (song == nullptr) {
+
+		auto new_song = Song::LoadFile(storage, name, directory);
+		if (!new_song) {
 			FormatDebug(update_domain,
 				    "ignoring unrecognized file %s/%s",
 				    directory.GetPath(), name);
@@ -73,7 +72,7 @@ UpdateWalk::UpdateSongFile2(Directory &directory,
 
 		{
 			const ScopeDatabaseLock protect;
-			directory.AddSong(song);
+			directory.AddSong(std::move(new_song));
 		}
 
 		modified = true;
@@ -91,12 +90,16 @@ UpdateWalk::UpdateSongFile2(Directory &directory,
 
 		modified = true;
 	}
+} catch (...) {
+	FormatError(std::current_exception(),
+		    "error reading file %s/%s",
+		    directory.GetPath(), name);
 }
 
 bool
 UpdateWalk::UpdateSongFile(Directory &directory,
 			   const char *name, const char *suffix,
-			   const StorageFileInfo &info)
+			   const StorageFileInfo &info) noexcept
 {
 	if (!decoder_plugins_supports_suffix(suffix))
 		return false;

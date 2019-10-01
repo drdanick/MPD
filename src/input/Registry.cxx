@@ -1,5 +1,5 @@
 /*
- * Copyright 2003-2016 The Music Player Daemon Project
+ * Copyright 2003-2019 The Music Player Daemon Project
  * http://www.musicpd.org
  *
  * This program is free software; you can redistribute it and/or modify
@@ -17,17 +17,14 @@
  * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
  */
 
-#include "config.h"
 #include "Registry.hxx"
-#include "util/Macros.hxx"
-#include "plugins/FileInputPlugin.hxx"
+#include "InputPlugin.hxx"
+#include "plugins/TidalInputPlugin.hxx"
+#include "plugins/QobuzInputPlugin.hxx"
+#include "config.h"
 
 #ifdef ENABLE_ALSA
 #include "plugins/AlsaInputPlugin.hxx"
-#endif
-
-#ifdef ENABLE_ARCHIVE
-#include "plugins/ArchiveInputPlugin.hxx"
 #endif
 
 #ifdef ENABLE_CURL
@@ -55,12 +52,14 @@
 #endif
 
 const InputPlugin *const input_plugins[] = {
-	&input_plugin_file,
 #ifdef ENABLE_ALSA
 	&input_plugin_alsa,
 #endif
-#ifdef ENABLE_ARCHIVE
-	&input_plugin_archive,
+#ifdef ENABLE_TIDAL
+	&tidal_input_plugin,
+#endif
+#ifdef ENABLE_QOBUZ
+	&qobuz_input_plugin,
 #endif
 #ifdef ENABLE_CURL
 	&input_plugin_curl,
@@ -83,4 +82,15 @@ const InputPlugin *const input_plugins[] = {
 	nullptr
 };
 
-bool input_plugins_enabled[ARRAY_SIZE(input_plugins) - 1];
+bool input_plugins_enabled[std::size(input_plugins) - 1];
+
+bool
+HasRemoteTagScanner(const char *uri) noexcept
+{
+	input_plugins_for_each_enabled(plugin)
+		if (plugin->scan_tags != nullptr &&
+		    plugin->SupportsUri(uri))
+			return true;
+
+	return false;
+}

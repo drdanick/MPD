@@ -1,5 +1,5 @@
 /*
- * Copyright 2003-2016 The Music Player Daemon Project
+ * Copyright 2003-2019 The Music Player Daemon Project
  * http://www.musicpd.org
  *
  * This program is free software; you can redistribute it and/or modify
@@ -17,11 +17,11 @@
  * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
  */
 
-#include "config.h"
+#include "NormalizeFilterPlugin.hxx"
 #include "filter/FilterPlugin.hxx"
-#include "filter/FilterInternal.hxx"
-#include "filter/FilterRegistry.hxx"
-#include "pcm/PcmBuffer.hxx"
+#include "filter/Filter.hxx"
+#include "filter/Prepared.hxx"
+#include "pcm/Buffer.hxx"
 #include "AudioFormat.hxx"
 #include "AudioCompress/compress.h"
 #include "util/ConstBuffer.hxx"
@@ -49,21 +49,21 @@ public:
 class PreparedNormalizeFilter final : public PreparedFilter {
 public:
 	/* virtual methods from class PreparedFilter */
-	Filter *Open(AudioFormat &af) override;
+	std::unique_ptr<Filter> Open(AudioFormat &af) override;
 };
 
-static PreparedFilter *
+static std::unique_ptr<PreparedFilter>
 normalize_filter_init(gcc_unused const ConfigBlock &block)
 {
-	return new PreparedNormalizeFilter();
+	return std::make_unique<PreparedNormalizeFilter>();
 }
 
-Filter *
+std::unique_ptr<Filter>
 PreparedNormalizeFilter::Open(AudioFormat &audio_format)
 {
 	audio_format.format = SampleFormat::S16;
 
-	return new NormalizeFilter(audio_format);
+	return std::make_unique<NormalizeFilter>(audio_format);
 }
 
 ConstBuffer<void>
@@ -80,3 +80,9 @@ const FilterPlugin normalize_filter_plugin = {
 	"normalize",
 	normalize_filter_init,
 };
+
+std::unique_ptr<PreparedFilter>
+normalize_filter_prepare() noexcept
+{
+	return std::make_unique<PreparedNormalizeFilter>();
+}

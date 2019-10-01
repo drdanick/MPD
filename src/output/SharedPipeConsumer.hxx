@@ -1,5 +1,5 @@
 /*
- * Copyright 2003-2016 The Music Player Daemon Project
+ * Copyright 2003-2019 The Music Player Daemon Project
  * http://www.musicpd.org
  *
  * This program is free software; you can redistribute it and/or modify
@@ -20,8 +20,7 @@
 #ifndef SHARED_PIPE_CONSUMER_HXX
 #define SHARED_PIPE_CONSUMER_HXX
 
-#include "check.h"
-#include "Compiler.h"
+#include "util/Compiler.h"
 
 #include <assert.h>
 
@@ -30,6 +29,11 @@ class MusicPipe;
 
 /**
  * A utility class which helps with consuming data from a #MusicPipe.
+ *
+ * This class is intentionally not thread-safe.  Since it is designed
+ * to be called from two distinct threads (PlayerThread=feeder and
+ * OutputThread=consumer), all methods must be called with a mutex
+ * locked to serialize access.  Usually, this is #AudioOutput::mutex.
  */
 class SharedPipeConsumer {
 	/**
@@ -46,7 +50,7 @@ class SharedPipeConsumer {
 	const MusicChunk *chunk;
 
 	/**
-	 * Has the output finished playing #current_chunk?
+	 * Has the output finished playing #chunk?
 	 */
 	bool consumed;
 
@@ -70,7 +74,7 @@ public:
 		chunk = nullptr;
 	}
 
-	const MusicChunk *Get();
+	const MusicChunk *Get() noexcept;
 
 	void Consume(gcc_unused const MusicChunk &_chunk) {
 		assert(chunk != nullptr);
@@ -80,9 +84,9 @@ public:
 	}
 
 	gcc_pure
-	bool IsConsumed(const MusicChunk &_chunk) const;
+	bool IsConsumed(const MusicChunk &_chunk) const noexcept;
 
-	void ClearTail(gcc_unused const MusicChunk &_chunk) {
+	void ClearTail(gcc_unused const MusicChunk &_chunk) noexcept {
 		assert(chunk == &_chunk);
 		assert(consumed);
 		chunk = nullptr;

@@ -1,5 +1,5 @@
 /*
- * Copyright 2003-2016 The Music Player Daemon Project
+ * Copyright 2003-2019 The Music Player Daemon Project
  * http://www.musicpd.org
  *
  * This program is free software; you can redistribute it and/or modify
@@ -17,12 +17,10 @@
  * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
  */
 
-#include "config.h"
 #include "FlacEncoderPlugin.hxx"
 #include "../EncoderAPI.hxx"
 #include "AudioFormat.hxx"
-#include "pcm/PcmBuffer.hxx"
-#include "config/ConfigError.hxx"
+#include "pcm/Buffer.hxx"
 #include "util/DynamicFifoBuffer.hxx"
 #include "util/RuntimeError.hxx"
 
@@ -48,7 +46,7 @@ class FlacEncoder final : public Encoder {
 public:
 	FlacEncoder(AudioFormat _audio_format, FLAC__StreamEncoder *_fse);
 
-	~FlacEncoder() override {
+	~FlacEncoder() noexcept override {
 		FLAC__stream_encoder_delete(fse);
 	}
 
@@ -63,7 +61,7 @@ public:
 
 	void Write(const void *data, size_t length) override;
 
-	size_t Read(void *dest, size_t length) override {
+	size_t Read(void *dest, size_t length) noexcept override {
 		return output_buffer.Read((uint8_t *)dest, length);
 	}
 
@@ -73,7 +71,7 @@ private:
 							    size_t bytes,
 							    gcc_unused unsigned samples,
 							    gcc_unused unsigned current_frame,
-							    void *client_data) {
+							    void *client_data) noexcept {
 		auto &encoder = *(FlacEncoder *)client_data;
 		encoder.output_buffer.Append((const uint8_t *)data, bytes);
 		return FLAC__STREAM_ENCODER_WRITE_STATUS_OK;
@@ -89,7 +87,7 @@ public:
 	/* virtual methods from class PreparedEncoder */
 	Encoder *Open(AudioFormat &audio_format) override;
 
-	const char *GetMimeType() const override {
+	const char *GetMimeType() const noexcept override {
 		return  "audio/flac";
 	}
 };
@@ -186,7 +184,7 @@ PreparedFlacEncoder::Open(AudioFormat &audio_format)
 }
 
 static inline void
-pcm8_to_flac(int32_t *out, const int8_t *in, unsigned num_samples)
+pcm8_to_flac(int32_t *out, const int8_t *in, unsigned num_samples) noexcept
 {
 	while (num_samples > 0) {
 		*out++ = *in++;
@@ -195,7 +193,7 @@ pcm8_to_flac(int32_t *out, const int8_t *in, unsigned num_samples)
 }
 
 static inline void
-pcm16_to_flac(int32_t *out, const int16_t *in, unsigned num_samples)
+pcm16_to_flac(int32_t *out, const int16_t *in, unsigned num_samples) noexcept
 {
 	while (num_samples > 0) {
 		*out++ = *in++;

@@ -1,5 +1,5 @@
 /*
- * Copyright 2003-2016 The Music Player Daemon Project
+ * Copyright 2003-2019 The Music Player Daemon Project
  * http://www.musicpd.org
  *
  * This program is free software; you can redistribute it and/or modify
@@ -28,12 +28,17 @@
 #include "player/Control.hxx"
 #include "player/Listener.hxx"
 #include "ReplayGainMode.hxx"
+#include "SingleMode.hxx"
 #include "Chrono.hxx"
-#include "Compiler.h"
+#include "config.h"
+
+#include <string>
+#include <memory>
 
 struct Instance;
 class MultipleOutputs;
 class SongLoader;
+class ClientListener;
 
 /**
  * A partition of the Music Player Daemon.  It is a separate unit with
@@ -42,8 +47,13 @@ class SongLoader;
 struct Partition final : QueueListener, PlayerListener, MixerListener {
 	static constexpr unsigned TAG_MODIFIED = 0x1;
 	static constexpr unsigned SYNC_WITH_PLAYER = 0x2;
+	static constexpr unsigned BORDER_PAUSE = 0x4;
 
 	Instance &instance;
+
+	const std::string name;
+
+	std::unique_ptr<ClientListener> listener;
 
 	MaskMonitor global_events;
 
@@ -56,19 +66,29 @@ struct Partition final : QueueListener, PlayerListener, MixerListener {
 	ReplayGainMode replay_gain_mode = ReplayGainMode::OFF;
 
 	Partition(Instance &_instance,
+		  const char *_name,
 		  unsigned max_length,
 		  unsigned buffer_chunks,
-		  unsigned buffered_before_play,
 		  AudioFormat configured_audio_format,
-		  const ReplayGainConfig &replay_gain_config);
+		  const ReplayGainConfig &replay_gain_config) noexcept;
 
-	void EmitGlobalEvent(unsigned mask) {
+	~Partition() noexcept;
+
+	void EmitGlobalEvent(unsigned mask) noexcept {
 		global_events.OrMask(mask);
 	}
 
-	void EmitIdle(unsigned mask);
+	void EmitIdle(unsigned mask) noexcept;
 
-	void ClearQueue() {
+	/**
+	 * Populate the #InputCacheManager with soon-to-be-played song
+	 * files.
+	 *
+	 * Errors will be logged.
+	 */
+	void PrefetchQueue() noexcept;
+
+	void ClearQueue() noexcept {
 		playlist.Clear(pc);
 	}
 
@@ -95,11 +115,11 @@ struct Partition final : QueueListener, PlayerListener, MixerListener {
 		playlist.DeleteRange(pc, start, end);
 	}
 
-	void StaleSong(const char *uri) {
+	void StaleSong(const char *uri) noexcept {
 		playlist.StaleSong(pc, uri);
 	}
 
-	void Shuffle(unsigned start, unsigned end) {
+	void Shuffle(unsigned start, unsigned end) noexcept {
 		playlist.Shuffle(pc, start, end);
 	}
 
@@ -129,7 +149,7 @@ struct Partition final : QueueListener, PlayerListener, MixerListener {
 		playlist.SetPriorityId(pc, song_id, priority);
 	}
 
-	void Stop() {
+	void Stop() noexcept {
 		playlist.Stop(pc);
 	}
 
@@ -161,27 +181,27 @@ struct Partition final : QueueListener, PlayerListener, MixerListener {
 		playlist.SeekCurrent(pc, seek_time, relative);
 	}
 
-	void SetRepeat(bool new_value) {
+	void SetRepeat(bool new_value) noexcept {
 		playlist.SetRepeat(pc, new_value);
 	}
 
-	bool GetRandom() const {
+	bool GetRandom() const noexcept {
 		return playlist.GetRandom();
 	}
 
-	void SetRandom(bool new_value) {
+	void SetRandom(bool new_value) noexcept {
 		playlist.SetRandom(pc, new_value);
 	}
 
-	void SetSingle(bool new_value) {
+	void SetSingle(SingleMode new_value) noexcept {
 		playlist.SetSingle(pc, new_value);
 	}
 
-	void SetConsume(bool new_value) {
+	void SetConsume(bool new_value) noexcept {
 		playlist.SetConsume(new_value);
 	}
 
-	void SetReplayGainMode(ReplayGainMode mode) {
+	void SetReplayGainMode(ReplayGainMode mode) noexcept {
 		replay_gain_mode = mode;
 		UpdateEffectiveReplayGainMode();
 	}
@@ -190,7 +210,7 @@ struct Partition final : QueueListener, PlayerListener, MixerListener {
 	 * Publishes the effective #ReplayGainMode to all subsystems.
 	 * #ReplayGainMode::AUTO is substituted.
 	 */
-	void UpdateEffectiveReplayGainMode();
+	void UpdateEffectiveReplayGainMode() noexcept;
 
 #ifdef ENABLE_DATABASE
 	/**
@@ -198,44 +218,56 @@ struct Partition final : QueueListener, PlayerListener, MixerListener {
 	 * if this MPD configuration has no database (no
 	 * music_directory was configured).
 	 */
-	const Database *GetDatabase() const;
+	const Database *GetDatabase() const noexcept;
 
-	gcc_pure
 	const Database &GetDatabaseOrThrow() const;
 
 	/**
 	 * The database has been modified.  Propagate the change to
 	 * all subsystems.
 	 */
-	void DatabaseModified(const Database &db);
+	void DatabaseModified(const Database &db) noexcept;
 #endif
 
 	/**
 	 * A tag in the play queue has been modified by the player
 	 * thread.  Propagate the change to all subsystems.
 	 */
-	void TagModified();
+	void TagModified() noexcept;
+
+	/**
+	 * The tag of the given song has been modified.  Propagate the
+	 * change to all instances of this song in the queue.
+	 */
+	void TagModified(const char *uri, const Tag &tag) noexcept;
 
 	/**
 	 * Synchronize the player with the play queue.
 	 */
-	void SyncWithPlayer();
+	void SyncWithPlayer() noexcept;
+
+	/**
+	 * Border pause has just been enabled. Change single mode to off
+	 * if it was one-shot.
+	 */
+	void BorderPause() noexcept;
 
 private:
 	/* virtual methods from class QueueListener */
-	void OnQueueModified() override;
-	void OnQueueOptionsChanged() override;
-	void OnQueueSongStarted() override;
+	void OnQueueModified() noexcept override;
+	void OnQueueOptionsChanged() noexcept override;
+	void OnQueueSongStarted() noexcept override;
 
 	/* virtual methods from class PlayerListener */
-	void OnPlayerSync() override;
-	void OnPlayerTagModified() override;
+	void OnPlayerSync() noexcept override;
+	void OnPlayerTagModified() noexcept override;
+	void OnBorderPause() noexcept override;
 
 	/* virtual methods from class MixerListener */
-	void OnMixerVolumeChanged(Mixer &mixer, int volume) override;
+	void OnMixerVolumeChanged(Mixer &mixer, int volume) noexcept override;
 
 	/* callback for #global_events */
-	void OnGlobalEvent(unsigned mask);
+	void OnGlobalEvent(unsigned mask) noexcept;
 };
 
 #endif

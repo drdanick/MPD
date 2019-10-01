@@ -1,5 +1,5 @@
 /*
- * Copyright 2003-2016 The Music Player Daemon Project
+ * Copyright 2003-2019 The Music Player Daemon Project
  * http://www.musicpd.org
  *
  * This program is free software; you can redistribute it and/or modify
@@ -17,16 +17,14 @@
  * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
  */
 
-#include "config.h"
 #include "XspfPlaylistPlugin.hxx"
 #include "../PlaylistPlugin.hxx"
 #include "../MemorySongEnumerator.hxx"
-#include "DetachedSong.hxx"
+#include "song/DetachedSong.hxx"
 #include "input/InputStream.hxx"
-#include "tag/TagBuilder.hxx"
+#include "tag/Builder.hxx"
 #include "util/StringView.hxx"
 #include "lib/expat/ExpatParser.hxx"
-#include "Log.hxx"
 
 #include <string.h>
 
@@ -187,7 +185,7 @@ xspf_char_data(void *user_data, const XML_Char *s, int len)
  *
  */
 
-static SongEnumerator *
+static std::unique_ptr<SongEnumerator>
 xspf_open_stream(InputStreamPtr &&is)
 {
 	XspfParser parser;
@@ -200,7 +198,7 @@ xspf_open_stream(InputStreamPtr &&is)
 	}
 
 	parser.songs.reverse();
-	return new MemorySongEnumerator(std::move(parser.songs));
+	return std::make_unique<MemorySongEnumerator>(std::move(parser.songs));
 }
 
 static const char *const xspf_suffixes[] = {
@@ -213,15 +211,7 @@ static const char *const xspf_mime_types[] = {
 	nullptr
 };
 
-const struct playlist_plugin xspf_playlist_plugin = {
-	"xspf",
-
-	nullptr,
-	nullptr,
-	nullptr,
-	xspf_open_stream,
-
-	nullptr,
-	xspf_suffixes,
-	xspf_mime_types,
-};
+const PlaylistPlugin xspf_playlist_plugin =
+	PlaylistPlugin("xspf", xspf_open_stream)
+	.WithSuffixes(xspf_suffixes)
+	.WithMimeTypes(xspf_mime_types);

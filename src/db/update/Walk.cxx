@@ -1,5 +1,5 @@
 /*
- * Copyright 2003-2016 The Music Player Daemon Project
+ * Copyright 2003-2019 The Music Player Daemon Project
  * http://www.musicpd.org
  *
  * This program is free software; you can redistribute it and/or modify
@@ -17,31 +17,28 @@
  * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
  */
 
-#include "config.h" /* must be first for large file support */
 #include "Walk.hxx"
 #include "UpdateIO.hxx"
 #include "Editor.hxx"
 #include "UpdateDomain.hxx"
 #include "db/DatabaseLock.hxx"
-#include "db/PlaylistVector.hxx"
 #include "db/Uri.hxx"
 #include "db/plugins/simple/Directory.hxx"
 #include "db/plugins/simple/Song.hxx"
 #include "storage/StorageInterface.hxx"
-#include "playlist/PlaylistRegistry.hxx"
 #include "ExcludeList.hxx"
-#include "config/ConfigGlobal.hxx"
-#include "config/ConfigOption.hxx"
 #include "fs/AllocatedPath.hxx"
 #include "fs/Traits.hxx"
 #include "fs/FileSystem.hxx"
 #include "storage/FileInfo.hxx"
+#include "input/InputStream.hxx"
+#include "input/Error.hxx"
 #include "util/Alloc.hxx"
 #include "util/StringCompare.hxx"
-#include "util/UriUtil.hxx"
+#include "util/UriExtract.hxx"
 #include "Log.hxx"
 
-#include <stdexcept>
+#include <exception>
 #include <memory>
 
 #include <assert.h>
@@ -49,21 +46,13 @@
 #include <stdlib.h>
 #include <errno.h>
 
-UpdateWalk::UpdateWalk(EventLoop &_loop, DatabaseListener &_listener,
-		       Storage &_storage)
-	:cancel(false),
+UpdateWalk::UpdateWalk(const UpdateConfig &_config,
+		       EventLoop &_loop, DatabaseListener &_listener,
+		       Storage &_storage) noexcept
+	:config(_config), cancel(false),
 	 storage(_storage),
 	 editor(_loop, _listener)
 {
-#ifndef WIN32
-	follow_inside_symlinks =
-		config_get_bool(ConfigOption::FOLLOW_INSIDE_SYMLINKS,
-				DEFAULT_FOLLOW_INSIDE_SYMLINKS);
-
-	follow_outside_symlinks =
-		config_get_bool(ConfigOption::FOLLOW_OUTSIDE_SYMLINKS,
-				DEFAULT_FOLLOW_OUTSIDE_SYMLINKS);
-#endif
 }
 
 static void
@@ -75,7 +64,7 @@ directory_set_stat(Directory &dir, const StorageFileInfo &info)
 
 inline void
 UpdateWalk::RemoveExcludedFromDirectory(Directory &directory,
-					const ExcludeList &exclude_list)
+					const ExcludeList &exclude_list) noexcept
 {
 	const ScopeDatabaseLock protect;
 
@@ -90,9 +79,9 @@ UpdateWalk::RemoveExcludedFromDirectory(Directory &directory,
 		});
 
 	directory.ForEachSongSafe([&](Song &song){
-			assert(song.parent == &directory);
+			assert(&song.parent == &directory);
 
-			const auto name_fs = AllocatedPath::FromUTF8(song.uri);
+			const auto name_fs = AllocatedPath::FromUTF8(song.filename.c_str());
 			if (name_fs.IsNull() || exclude_list.Check(name_fs)) {
 				editor.DeleteSong(directory, &song);
 				modified = true;
@@ -101,10 +90,10 @@ UpdateWalk::RemoveExcludedFromDirectory(Directory &directory,
 }
 
 inline void
-UpdateWalk::PurgeDeletedFromDirectory(Directory &directory)
+UpdateWalk::PurgeDeletedFromDirectory(Directory &directory) noexcept
 {
 	directory.ForEachChildSafe([&](Directory &child){
-			if (DirectoryExists(storage, child))
+			if (child.IsMount() || DirectoryExists(storage, child))
 				return;
 
 			editor.LockDeleteDirectory(&child);
@@ -114,7 +103,7 @@ UpdateWalk::PurgeDeletedFromDirectory(Directory &directory)
 
 	directory.ForEachSongSafe([&](Song &song){
 			if (!directory_child_is_regular(storage, directory,
-							song.uri)) {
+							song.filename.c_str())) {
 				editor.LockDeleteSong(directory, &song);
 
 				modified = true;
@@ -133,9 +122,9 @@ UpdateWalk::PurgeDeletedFromDirectory(Directory &directory)
 	}
 }
 
-#ifndef WIN32
+#ifndef _WIN32
 static bool
-update_directory_stat(Storage &storage, Directory &directory)
+update_directory_stat(Storage &storage, Directory &directory) noexcept
 {
 	StorageFileInfo info;
 	if (!GetInfo(storage, directory.GetPath(), info))
@@ -154,9 +143,9 @@ update_directory_stat(Storage &storage, Directory &directory)
  */
 static int
 FindAncestorLoop(Storage &storage, Directory *parent,
-		 unsigned inode, unsigned device)
+		 unsigned inode, unsigned device) noexcept
 {
-#ifndef WIN32
+#ifndef _WIN32
 	if (device == 0 && inode == 0)
 		/* can't detect loops if the Storage does not support
 		   these numbers */
@@ -185,24 +174,9 @@ FindAncestorLoop(Storage &storage, Directory *parent,
 }
 
 inline bool
-UpdateWalk::UpdatePlaylistFile(Directory &directory,
-			       const char *name, const char *suffix,
-			       const StorageFileInfo &info)
-{
-	if (!playlist_suffix_supported(suffix))
-		return false;
-
-	PlaylistInfo pi(name, info.mtime);
-
-	const ScopeDatabaseLock protect;
-	if (directory.playlists.UpdateOrInsert(std::move(pi)))
-		modified = true;
-	return true;
-}
-
-inline bool
 UpdateWalk::UpdateRegularFile(Directory &directory,
-			      const char *name, const StorageFileInfo &info)
+			      const char *name,
+			      const StorageFileInfo &info) noexcept
 {
 	const char *suffix = uri_get_suffix(name);
 	if (suffix == nullptr)
@@ -216,7 +190,7 @@ UpdateWalk::UpdateRegularFile(Directory &directory,
 void
 UpdateWalk::UpdateDirectoryChild(Directory &directory,
 				 const ExcludeList &exclude_list,
-				 const char *name, const StorageFileInfo &info)
+				 const char *name, const StorageFileInfo &info) noexcept
 try {
 	assert(strchr(name, '/') == nullptr);
 
@@ -241,14 +215,14 @@ try {
 		FormatDebug(update_domain,
 			    "%s is not a directory, archive or music", name);
 	}
-} catch (const std::exception &e) {
-	LogError(e);
+} catch (...) {
+	LogError(std::current_exception());
 }
 
 /* we don't look at "." / ".." nor files with newlines in their name */
 gcc_pure
 static bool
-skip_path(const char *name_utf8)
+skip_path(const char *name_utf8) noexcept
 {
 	return strchr(name_utf8, '\n') != nullptr;
 }
@@ -256,9 +230,9 @@ skip_path(const char *name_utf8)
 gcc_pure
 bool
 UpdateWalk::SkipSymlink(const Directory *directory,
-			const char *utf8_name) const
+			const char *utf8_name) const noexcept
 {
-#ifndef WIN32
+#ifndef _WIN32
 	const auto path_fs = storage.MapChildFS(directory->GetPath(),
 						utf8_name);
 	if (path_fs.IsNull())
@@ -270,10 +244,12 @@ UpdateWalk::SkipSymlink(const Directory *directory,
 		/* don't skip if this is not a symlink */
 		return errno != EINVAL;
 
-	if (!follow_inside_symlinks && !follow_outside_symlinks) {
+	if (!config.follow_inside_symlinks &&
+	    !config.follow_outside_symlinks) {
 		/* ignore all symlinks */
 		return true;
-	} else if (follow_inside_symlinks && follow_outside_symlinks) {
+	} else if (config.follow_inside_symlinks &&
+		   config.follow_outside_symlinks) {
 		/* consider all symlinks */
 		return false;
 	}
@@ -288,8 +264,8 @@ UpdateWalk::SkipSymlink(const Directory *directory,
 		const char *relative =
 			storage.MapToRelativeUTF8(target_utf8.c_str());
 		return relative != nullptr
-			? !follow_inside_symlinks
-			: !follow_outside_symlinks;
+			? !config.follow_inside_symlinks
+			: !config.follow_outside_symlinks;
 	}
 
 	const char *p = target.c_str();
@@ -301,7 +277,7 @@ UpdateWalk::SkipSymlink(const Directory *directory,
 				/* we have moved outside the music
 				   directory - skip this symlink
 				   if such symlinks are not allowed */
-				return !follow_outside_symlinks;
+				return !config.follow_outside_symlinks;
 			}
 			p += 3;
 		} else if (PathTraitsFS::IsSeparator(p[1]))
@@ -314,7 +290,7 @@ UpdateWalk::SkipSymlink(const Directory *directory,
 	/* we are still in the music directory, so this symlink points
 	   to a song which is already in the database - skip according
 	   to the follow_inside_symlinks param*/
-	return !follow_inside_symlinks;
+	return !config.follow_inside_symlinks;
 #else
 	/* no symlink checking on WIN32 */
 
@@ -328,7 +304,7 @@ UpdateWalk::SkipSymlink(const Directory *directory,
 bool
 UpdateWalk::UpdateDirectory(Directory &directory,
 			    const ExcludeList &exclude_list,
-			    const StorageFileInfo &info)
+			    const StorageFileInfo &info) noexcept
 {
 	assert(info.IsDirectory());
 
@@ -337,19 +313,23 @@ UpdateWalk::UpdateDirectory(Directory &directory,
 	std::unique_ptr<StorageDirectoryReader> reader;
 
 	try {
-		reader.reset(storage.OpenDirectory(directory.GetPath()));
-	} catch (const std::runtime_error &e) {
-		LogError(e);
+		reader = storage.OpenDirectory(directory.GetPath());
+	} catch (...) {
+		LogError(std::current_exception());
 		return false;
 	}
 
 	ExcludeList child_exclude_list(exclude_list);
 
-	{
-		const auto exclude_path_fs =
-			storage.MapChildFS(directory.GetPath(), ".mpdignore");
-		if (!exclude_path_fs.IsNull())
-			child_exclude_list.LoadFile(exclude_path_fs);
+	try {
+		Mutex mutex;
+		auto is = InputStream::OpenReady(PathTraitsUTF8::Build(storage.MapUTF8(directory.GetPath()).c_str(),
+								       ".mpdignore").c_str(),
+						 mutex);
+		child_exclude_list.Load(std::move(is));
+	} catch (...) {
+		if (!IsFileNotFound(std::current_exception()))
+			LogError(std::current_exception());
 	}
 
 	if (!child_exclude_list.IsEmpty())
@@ -390,7 +370,7 @@ UpdateWalk::UpdateDirectory(Directory &directory,
 inline Directory *
 UpdateWalk::DirectoryMakeChildChecked(Directory &parent,
 				      const char *uri_utf8,
-				      const char *name_utf8)
+				      const char *name_utf8) noexcept
 {
 	Directory *directory;
 	{
@@ -429,7 +409,8 @@ UpdateWalk::DirectoryMakeChildChecked(Directory &parent,
 }
 
 inline Directory *
-UpdateWalk::DirectoryMakeUriParentChecked(Directory &root, const char *uri)
+UpdateWalk::DirectoryMakeUriParentChecked(Directory &root,
+					  const char *uri) noexcept
 {
 	Directory *directory = &root;
 	char *duplicated = xstrdup(uri);
@@ -455,7 +436,7 @@ UpdateWalk::DirectoryMakeUriParentChecked(Directory &root, const char *uri)
 }
 
 inline void
-UpdateWalk::UpdateUri(Directory &root, const char *uri)
+UpdateWalk::UpdateUri(Directory &root, const char *uri) noexcept
 try {
 	Directory *parent = DirectoryMakeUriParentChecked(root, uri);
 	if (parent == nullptr)
@@ -477,12 +458,12 @@ try {
 	ExcludeList exclude_list;
 
 	UpdateDirectoryChild(*parent, exclude_list, name, info);
-} catch (const std::exception &e) {
-	LogError(e);
+} catch (...) {
+	LogError(std::current_exception());
 }
 
 bool
-UpdateWalk::Walk(Directory &root, const char *path, bool discard)
+UpdateWalk::Walk(Directory &root, const char *path, bool discard) noexcept
 {
 	walk_discard = discard;
 	modified = false;

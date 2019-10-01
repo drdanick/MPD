@@ -1,5 +1,5 @@
 /*
- * Copyright 2003-2016 The Music Player Daemon Project
+ * Copyright 2003-2019 The Music Player Daemon Project
  * http://www.musicpd.org
  *
  * This program is free software; you can redistribute it and/or modify
@@ -21,101 +21,142 @@
 #define MPD_LOG_HXX
 
 #include "LogLevel.hxx"
-#include "Compiler.h"
+#include "util/Compiler.h"
 
 #include <exception>
 
 class Domain;
 
 void
-Log(const Domain &domain, LogLevel level, const char *msg);
+Log(LogLevel level, const Domain &domain, const char *msg) noexcept;
 
 gcc_printf(3,4)
 void
-LogFormat(const Domain &domain, LogLevel level, const char *fmt, ...);
-
-static inline void
-LogDebug(const Domain &domain, const char *msg)
-{
-	Log(domain, LogLevel::DEBUG, msg);
-}
-
-gcc_printf(2,3)
-void
-FormatDebug(const Domain &domain, const char *fmt, ...);
-
-static inline void
-LogInfo(const Domain &domain, const char *msg)
-{
-	Log(domain, LogLevel::INFO, msg);
-}
-
-gcc_printf(2,3)
-void
-FormatInfo(const Domain &domain, const char *fmt, ...);
-
-static inline void
-LogDefault(const Domain &domain, const char *msg)
-{
-	Log(domain, LogLevel::DEFAULT, msg);
-}
-
-gcc_printf(2,3)
-void
-FormatDefault(const Domain &domain, const char *fmt, ...);
-
-static inline void
-LogWarning(const Domain &domain, const char *msg)
-{
-	Log(domain, LogLevel::WARNING, msg);
-}
-
-gcc_printf(2,3)
-void
-FormatWarning(const Domain &domain, const char *fmt, ...);
-
-static inline void
-LogError(const Domain &domain, const char *msg)
-{
-	Log(domain, LogLevel::ERROR, msg);
-}
+LogFormat(LogLevel level, const Domain &domain, const char *fmt, ...) noexcept;
 
 void
-LogError(const std::exception &e);
+Log(LogLevel level, const std::exception &e) noexcept;
 
 void
-LogError(const std::exception &e, const char *msg);
-
-gcc_printf(2,3)
-void
-FormatError(const std::exception &e, const char *fmt, ...);
-
-void
-LogError(const std::exception_ptr &ep);
-
-void
-LogError(const std::exception_ptr &ep, const char *msg);
-
-gcc_printf(2,3)
-void
-FormatError(const std::exception_ptr &ep, const char *fmt, ...);
-
-gcc_printf(2,3)
-void
-FormatError(const Domain &domain, const char *fmt, ...);
-
-void
-LogErrno(const Domain &domain, int e, const char *msg);
-
-void
-LogErrno(const Domain &domain, const char *msg);
+Log(LogLevel level, const std::exception &e, const char *msg) noexcept;
 
 gcc_printf(3,4)
 void
-FormatErrno(const Domain &domain, int e, const char *fmt, ...);
+LogFormat(LogLevel level, const std::exception &e,
+	  const char *fmt, ...) noexcept;
+
+void
+Log(LogLevel level, const std::exception_ptr &ep) noexcept;
+
+void
+Log(LogLevel level, const std::exception_ptr &ep, const char *msg) noexcept;
+
+gcc_printf(3,4)
+void
+LogFormat(LogLevel level, const std::exception_ptr &ep,
+	  const char *fmt, ...) noexcept;
+
+static inline void
+LogDebug(const Domain &domain, const char *msg) noexcept
+{
+	Log(LogLevel::DEBUG, domain, msg);
+}
 
 gcc_printf(2,3)
 void
-FormatErrno(const Domain &domain, const char *fmt, ...);
+FormatDebug(const Domain &domain, const char *fmt, ...) noexcept;
+
+static inline void
+LogInfo(const Domain &domain, const char *msg) noexcept
+{
+	Log(LogLevel::INFO, domain, msg);
+}
+
+gcc_printf(2,3)
+void
+FormatInfo(const Domain &domain, const char *fmt, ...) noexcept;
+
+static inline void
+LogDefault(const Domain &domain, const char *msg) noexcept
+{
+	Log(LogLevel::DEFAULT, domain, msg);
+}
+
+gcc_printf(2,3)
+void
+FormatDefault(const Domain &domain, const char *fmt, ...) noexcept;
+
+static inline void
+LogWarning(const Domain &domain, const char *msg) noexcept
+{
+	Log(LogLevel::WARNING, domain, msg);
+}
+
+gcc_printf(2,3)
+void
+FormatWarning(const Domain &domain, const char *fmt, ...) noexcept;
+
+static inline void
+LogError(const Domain &domain, const char *msg) noexcept
+{
+	Log(LogLevel::ERROR, domain, msg);
+}
+
+inline void
+LogError(const std::exception &e) noexcept
+{
+	Log(LogLevel::ERROR, e);
+}
+
+inline void
+LogError(const std::exception &e, const char *msg) noexcept
+{
+	Log(LogLevel::ERROR, e, msg);
+}
+
+template<typename... Args>
+inline void
+FormatError(const std::exception &e, const char *fmt, Args&&... args) noexcept
+{
+	LogFormat(LogLevel::ERROR, e, fmt, std::forward<Args>(args)...);
+}
+
+inline void
+LogError(const std::exception_ptr &ep) noexcept
+{
+	Log(LogLevel::ERROR, ep);
+}
+
+inline void
+LogError(const std::exception_ptr &ep, const char *msg) noexcept
+{
+	Log(LogLevel::ERROR, ep, msg);
+}
+
+template<typename... Args>
+inline void
+FormatError(const std::exception_ptr &ep,
+	    const char *fmt, Args&&... args) noexcept
+{
+	LogFormat(LogLevel::ERROR, ep, fmt, std::forward<Args>(args)...);
+}
+
+gcc_printf(2,3)
+void
+FormatError(const Domain &domain, const char *fmt, ...) noexcept;
+
+void
+LogErrno(const Domain &domain, int e, const char *msg) noexcept;
+
+void
+LogErrno(const Domain &domain, const char *msg) noexcept;
+
+gcc_printf(3,4)
+void
+FormatErrno(const Domain &domain, int e, const char *fmt, ...) noexcept;
+
+gcc_printf(2,3)
+void
+FormatErrno(const Domain &domain, const char *fmt, ...) noexcept;
 
 #endif /* LOG_H */

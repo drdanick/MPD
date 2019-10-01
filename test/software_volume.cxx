@@ -1,5 +1,5 @@
 /*
- * Copyright 2003-2016 The Music Player Daemon Project
+ * Copyright 2003-2019 The Music Player Daemon Project
  * http://www.musicpd.org
  *
  * This program is free software; you can redistribute it and/or modify
@@ -23,12 +23,11 @@
  *
  */
 
-#include "config.h"
 #include "pcm/Volume.hxx"
 #include "AudioParser.hxx"
 #include "AudioFormat.hxx"
 #include "util/ConstBuffer.hxx"
-#include "Log.hxx"
+#include "util/PrintException.hxx"
 
 #include <stdio.h>
 #include <stddef.h>
@@ -51,7 +50,11 @@ try {
 		audio_format = ParseAudioFormat(argv[1], false);
 
 	PcmVolume pv;
-	pv.Open(audio_format.format);
+	const auto out_sample_format = pv.Open(audio_format.format, false);
+
+	if (out_sample_format != audio_format.format)
+		fprintf(stderr, "Converting to %s\n",
+			sample_format_to_string(out_sample_format));
 
 	while ((nbytes = read(0, buffer, sizeof(buffer))) > 0) {
 		auto dest = pv.Apply({buffer, size_t(nbytes)});
@@ -59,7 +62,7 @@ try {
 	}
 
 	pv.Close();
-} catch (const std::exception &e) {
-	LogError(e);
+} catch (...) {
+	PrintException(std::current_exception());
 	return EXIT_FAILURE;
 }
