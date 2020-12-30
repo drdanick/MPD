@@ -1,5 +1,5 @@
 /*
- * Copyright 2003-2019 The Music Player Daemon Project
+ * Copyright 2003-2020 The Music Player Daemon Project
  * http://www.musicpd.org
  *
  * This program is free software; you can redistribute it and/or modify
@@ -22,21 +22,19 @@
 
 #include "Compiler.h"
 
-#include <stdarg.h>
+#include <cstdarg>
 
 template<typename T> class AllocatedString;
 
 /**
- * Format into a newly allocated string.  The caller frees the return
- * value with delete[].
+ * Format into an #AllocatedString.
  */
 gcc_nonnull_all
 AllocatedString<char>
-FormatStringV(const char *fmt, va_list args) noexcept;
+FormatStringV(const char *fmt, std::va_list args) noexcept;
 
 /**
- * Format into a newly allocated string.  The caller frees the return
- * value with delete[].
+ * Format into an #AllocatedString.
  */
 gcc_nonnull(1) gcc_printf(1,2)
 AllocatedString<char>

@@ -1,5 +1,5 @@
 /*
- * Copyright 2003-2019 The Music Player Daemon Project
+ * Copyright 2003-2020 The Music Player Daemon Project
  * http://www.musicpd.org
  *
  * This program is free software; you can redistribute it and/or modify
@@ -26,6 +26,7 @@
 #include "util/Compiler.h"
 
 #include <functional>
+#include <stdexcept>
 
 namespace UDisks2 {
 
@@ -119,19 +120,20 @@ static void
 ParseInterface(Object &o, const char *interface,
 	       ODBus::ReadMessageIter &&i) noexcept
 {
-	using namespace std::placeholders;
 	if (StringIsEqual(interface, "org.freedesktop.UDisks2.Drive")) {
-		i.ForEachProperty(std::bind(ParseDriveDictEntry,
-					    std::ref(o), _1, _2));
+		i.ForEachProperty([&](auto n, auto v) {
+			return ParseDriveDictEntry(o, n, std::move(v));
+		});
 	} else if (StringIsEqual(interface, "org.freedesktop.UDisks2.Block")) {
-		i.ForEachProperty(std::bind(ParseBlockDictEntry,
-					    std::ref(o), _1, _2));
+		i.ForEachProperty([&](auto n, auto v) {
+			return ParseBlockDictEntry(o, n, std::move(v));
+		});
 	} else if (StringIsEqual(interface, "org.freedesktop.UDisks2.Filesystem")) {
 		o.is_filesystem = true;
 
-		i.ForEachProperty(std::bind(ParseFileesystemDictEntry,
-					    std::ref(o), _1, _2));
-
+		i.ForEachProperty([&](auto n, auto v) {
+			return ParseFileesystemDictEntry(o, n, std::move(v));
+		});
 	}
 }
 
@@ -166,7 +168,7 @@ ParseObjects(ODBus::ReadMessageIter &&i,
 
 	ForEachInterface(std::move(i), [&callback](const char *path, auto &&j){
 			Object o(path);
-			ParseObject(o, std::move(j));
+			ParseObject(o, std::forward<decltype(j)>(j));
 			if (o.IsValid())
 				callback(std::move(o));
 		});

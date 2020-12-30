@@ -1,5 +1,5 @@
 /*
- * Copyright 2003-2019 The Music Player Daemon Project
+ * Copyright 2003-2020 The Music Player Daemon Project
  * http://www.musicpd.org
  *
  * This program is free software; you can redistribute it and/or modify
@@ -20,14 +20,14 @@
 #ifndef MPD_MULTI_SOCKET_MONITOR_HXX
 #define MPD_MULTI_SOCKET_MONITOR_HXX
 
-#include "IdleMonitor.hxx"
+#include "IdleEvent.hxx"
 #include "TimerEvent.hxx"
-#include "SocketMonitor.hxx"
+#include "SocketEvent.hxx"
+#include "event/Features.h"
 
+#include <cassert>
 #include <forward_list>
 #include <iterator>
-
-#include <assert.h>
 
 #ifndef _WIN32
 struct pollfd;
@@ -36,37 +36,43 @@ struct pollfd;
 class EventLoop;
 
 /**
- * Similar to #SocketMonitor, but monitors multiple sockets.  To use
+ * Similar to #SocketEvent, but monitors multiple sockets.  To use
  * it, implement the methods PrepareSockets() and DispatchSockets().
  * In PrepareSockets(), use UpdateSocketList() and AddSocket().
  * DispatchSockets() will be called if at least one socket is ready.
  */
-class MultiSocketMonitor : IdleMonitor
+class MultiSocketMonitor
 {
-	class SingleFD final : public SocketMonitor {
+	class SingleFD final {
 		MultiSocketMonitor &multi;
+
+		SocketEvent event;
 
 		unsigned revents;
 
 	public:
-		SingleFD(MultiSocketMonitor &_multi, SocketDescriptor _fd,
-			 unsigned events) noexcept
-			:SocketMonitor(_fd, _multi.GetEventLoop()),
-			multi(_multi), revents(0) {
-			Schedule(events);
-		}
+		SingleFD(MultiSocketMonitor &_multi,
+			 SocketDescriptor _fd) noexcept
+			:multi(_multi),
+			 event(multi.GetEventLoop(),
+			       BIND_THIS_METHOD(OnSocketReady), _fd),
+			 revents(0) {}
 
 		SocketDescriptor GetSocket() const noexcept {
-			return SocketMonitor::GetSocket();
+			return event.GetSocket();
 		}
 
 		unsigned GetEvents() const noexcept {
-			return SocketMonitor::GetScheduledFlags();
+			return event.GetScheduledFlags();
 		}
 
 		void SetEvents(unsigned _events) noexcept {
 			revents &= _events;
-			SocketMonitor::Schedule(_events);
+			event.Schedule(_events);
+		}
+
+		bool Schedule(unsigned events) noexcept {
+			return event.Schedule(events);
 		}
 
 		unsigned GetReturnedEvents() const noexcept {
@@ -77,15 +83,14 @@ class MultiSocketMonitor : IdleMonitor
 			revents = 0;
 		}
 
-	protected:
-		bool OnSocketReady(unsigned flags) noexcept override {
+	private:
+		void OnSocketReady(unsigned flags) noexcept {
 			revents = flags;
 			multi.SetReady();
-			return true;
 		}
 	};
 
-	friend class SingleFD;
+	IdleEvent idle_event;
 
 	TimerEvent timeout_event;
 
@@ -105,15 +110,27 @@ class MultiSocketMonitor : IdleMonitor
 
 	std::forward_list<SingleFD> fds;
 
-public:
-	static constexpr unsigned READ = SocketMonitor::READ;
-	static constexpr unsigned WRITE = SocketMonitor::WRITE;
-	static constexpr unsigned ERROR = SocketMonitor::ERROR;
-	static constexpr unsigned HANGUP = SocketMonitor::HANGUP;
+#ifdef USE_EPOLL
+	struct AlwaysReady {
+		const SocketDescriptor fd;
+		const unsigned revents;
+	};
 
+	/**
+	 * A list of file descriptors which are always ready.  This is
+	 * a kludge needed because the ALSA output plugin gives us a
+	 * file descriptor to /dev/null, which is incompatible with
+	 * epoll (epoll_ctl() returns -EPERM).
+	 */
+	std::forward_list<AlwaysReady> always_ready_fds;
+#endif
+
+public:
 	MultiSocketMonitor(EventLoop &_loop) noexcept;
 
-	using IdleMonitor::GetEventLoop;
+	EventLoop &GetEventLoop() const noexcept {
+		return idle_event.GetEventLoop();
+	}
 
 	/**
 	 * Clear the socket list and disable all #EventLoop
@@ -138,7 +155,7 @@ public:
 	 */
 	void InvalidateSockets() noexcept {
 		refresh = true;
-		IdleMonitor::Schedule();
+		idle_event.Schedule();
 	}
 
 	/**
@@ -146,9 +163,7 @@ public:
 	 *
 	 * May only be called from PrepareSockets().
 	 */
-	void AddSocket(SocketDescriptor fd, unsigned events) noexcept {
-		fds.emplace_front(*this, fd, events);
-	}
+	bool AddSocket(SocketDescriptor fd, unsigned events) noexcept;
 
 	/**
 	 * Remove all sockets.
@@ -203,6 +218,11 @@ public:
 				i.ClearReturnedEvents();
 			}
 		}
+
+#ifdef USE_EPOLL
+		for (const auto &i : always_ready_fds)
+			f(i.fd, i.revents);
+#endif
 	}
 
 protected:
@@ -213,7 +233,7 @@ protected:
 	 *
 	 * @return timeout or a negative value for no timeout
 	 */
-	virtual std::chrono::steady_clock::duration PrepareSockets() noexcept = 0;
+	virtual Event::Duration PrepareSockets() noexcept = 0;
 
 	/**
 	 * At least one socket is ready or the timeout has expired.
@@ -224,17 +244,16 @@ protected:
 private:
 	void SetReady() noexcept {
 		ready = true;
-		IdleMonitor::Schedule();
+		idle_event.Schedule();
 	}
 
 	void Prepare() noexcept;
 
 	void OnTimeout() noexcept {
 		SetReady();
-		IdleMonitor::Schedule();
 	}
 
-	virtual void OnIdle() noexcept final;
+	void OnIdle() noexcept;
 };
 
 #endif

@@ -1,5 +1,5 @@
 /*
- * Copyright 2012-2019 Max Kellermann <max.kellermann@gmail.com>
+ * Copyright 2012-2020 Max Kellermann <max.kellermann@gmail.com>
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -36,9 +36,9 @@
 #include <cstddef>
 
 #ifdef _WIN32
-#include <winsock2.h>
+#include <winsock2.h> // IWYU pragma: export
 #else
-#include <sys/socket.h>
+#include <sys/socket.h> // IWYU pragma: export
 #endif
 
 template<typename T> struct ConstBuffer;
@@ -80,6 +80,19 @@ public:
 
 	constexpr const struct sockaddr *GetAddress() const noexcept {
 		return address;
+	}
+
+	/**
+	 * Cast the "sockaddr" pointer to a different address type,
+	 * e.g. "sockaddr_in".  This is only legal after checking
+	 * !IsNull() and GetFamily().
+	 */
+	template<typename T>
+	constexpr const T &CastTo() const noexcept {
+		/* cast through void to work around the bogus
+		   alignment warning */
+		const void *q = reinterpret_cast<const void *>(address);
+		return *reinterpret_cast<const T *>(q);
 	}
 
 	constexpr size_type GetSize() const noexcept {

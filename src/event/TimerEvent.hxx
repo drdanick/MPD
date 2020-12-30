@@ -1,5 +1,5 @@
 /*
- * Copyright 2003-2019 The Music Player Daemon Project
+ * Copyright 2003-2020 The Music Player Daemon Project
  * http://www.musicpd.org
  *
  * This program is free software; you can redistribute it and/or modify
@@ -20,11 +20,10 @@
 #ifndef MPD_TIMER_EVENT_HXX
 #define MPD_TIMER_EVENT_HXX
 
+#include "Chrono.hxx"
 #include "util/BindMethod.hxx"
 
 #include <boost/intrusive/set_hook.hpp>
-
-#include <chrono>
 
 class EventLoop;
 
@@ -36,42 +35,45 @@ class EventLoop;
  * thread that runs the #EventLoop, except where explicitly documented
  * as thread-safe.
  */
-class TimerEvent final {
+class TimerEvent final
+	: public boost::intrusive::set_base_hook<boost::intrusive::link_mode<boost::intrusive::auto_unlink>>
+{
 	friend class EventLoop;
-
-	typedef boost::intrusive::set_member_hook<> TimerSetHook;
-	TimerSetHook timer_set_hook;
 
 	EventLoop &loop;
 
-	typedef BoundMethod<void() noexcept> Callback;
+	using Callback = BoundMethod<void() noexcept>;
 	const Callback callback;
 
 	/**
-	 * When is this timer due?  This is only valid if IsActive()
+	 * When is this timer due?  This is only valid if IsPending()
 	 * returns true.
 	 */
-	std::chrono::steady_clock::time_point due;
+	Event::Clock::time_point due;
 
 public:
 	TimerEvent(EventLoop &_loop, Callback _callback) noexcept
-		:loop(_loop), callback(_callback) {
-	}
-
-	~TimerEvent() noexcept {
-		Cancel();
-	}
+		:loop(_loop), callback(_callback) {}
 
 	auto &GetEventLoop() const noexcept {
 		return loop;
 	}
 
-	bool IsActive() const noexcept {
-		return timer_set_hook.is_linked();
+	bool IsPending() const noexcept {
+		return is_linked();
 	}
 
-	void Schedule(std::chrono::steady_clock::duration d) noexcept;
-	void Cancel() noexcept;
+	void Schedule(Event::Duration d) noexcept;
+
+	/**
+	 * Like Schedule(), but is a no-op if there is a due time
+	 * earlier than the given one.
+	 */
+	void ScheduleEarlier(Event::Duration d) noexcept;
+
+	void Cancel() noexcept {
+		unlink();
+	}
 
 private:
 	void Run() noexcept {

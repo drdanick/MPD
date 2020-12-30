@@ -1,5 +1,5 @@
 /*
- * Copyright 2003-2019 The Music Player Daemon Project
+ * Copyright 2003-2020 The Music Player Daemon Project
  * http://www.musicpd.org
  *
  * This program is free software; you can redistribute it and/or modify
@@ -20,7 +20,7 @@
 #include "ZeroconfBonjour.hxx"
 #include "ZeroconfInternal.hxx"
 #include "Listen.hxx"
-#include "event/SocketMonitor.hxx"
+#include "event/SocketEvent.hxx"
 #include "util/Domain.hxx"
 #include "Log.hxx"
 #include "util/Compiler.h"
@@ -31,15 +31,19 @@
 
 static constexpr Domain bonjour_domain("bonjour");
 
-class BonjourMonitor final : public SocketMonitor {
+class BonjourMonitor final {
 	DNSServiceRef service_ref;
+
+	SocketEvent socket_event;
 
 public:
 	BonjourMonitor(EventLoop &_loop, DNSServiceRef _service_ref)
-		:SocketMonitor(SocketDescriptor(DNSServiceRefSockFD(_service_ref)),
-			       _loop),
-		 service_ref(_service_ref) {
-		ScheduleRead();
+		:service_ref(_service_ref),
+		 socket_event(SocketDescriptor(DNSServiceRefSockFD(service_ref)),
+			      BIND_THIS_METHOD(OnSocketReady),
+			      _loop)
+	{
+		socket_event.ScheduleRead();
 	}
 
 	~BonjourMonitor() {
@@ -48,21 +52,20 @@ public:
 
 protected:
 	/* virtual methods from class SocketMonitor */
-	bool OnSocketReady(gcc_unused unsigned flags) noexcept override {
+	void OnSocketReady([[maybe_unused]] unsigned flags) noexcept override {
 		DNSServiceProcessResult(service_ref);
-		return true;
 	}
 };
 
 static BonjourMonitor *bonjour_monitor;
 
 static void
-dnsRegisterCallback(gcc_unused DNSServiceRef sdRef,
-		    gcc_unused DNSServiceFlags flags,
+dnsRegisterCallback([[maybe_unused]] DNSServiceRef sdRef,
+		    [[maybe_unused]] DNSServiceFlags flags,
 		    DNSServiceErrorType errorCode, const char *name,
-		    gcc_unused const char *regtype,
-		    gcc_unused const char *domain,
-		    gcc_unused void *context)
+		    [[maybe_unused]] const char *regtype,
+		    [[maybe_unused]] const char *domain,
+		    [[maybe_unused]] void *context)
 {
 	if (errorCode != kDNSServiceErr_NoError) {
 		LogError(bonjour_domain,

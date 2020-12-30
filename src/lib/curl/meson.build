@@ -11,9 +11,11 @@ curl = static_library(
   'Init.cxx',
   'Global.cxx',
   'Request.cxx',
+  'Escape.cxx',
   'Form.cxx',
   include_directories: inc,
   dependencies: [
+    log_dep,
     curl_dep,
   ],
 )

@@ -1,5 +1,5 @@
 /*
- * Copyright 2003-2019 The Music Player Daemon Project
+ * Copyright 2003-2020 The Music Player Daemon Project
  * http://www.musicpd.org
  *
  * This program is free software; you can redistribute it and/or modify
@@ -31,7 +31,7 @@
 #include "thread/Mutex.hxx"
 #include "thread/Cond.hxx"
 #include "event/ServerSocket.hxx"
-#include "event/DeferEvent.hxx"
+#include "event/InjectEvent.hxx"
 #include "util/Cast.hxx"
 #include "util/Compiler.h"
 
@@ -115,7 +115,7 @@ private:
 	 */
 	std::queue<PagePtr, std::list<PagePtr>> pages;
 
-	DeferEvent defer_broadcast;
+	InjectEvent defer_broadcast;
 
  public:
 	/**
@@ -269,7 +269,7 @@ public:
 	bool Pause() override;
 
 private:
-	/* DeferEvent callback */
+	/* InjectEvent callback */
 	void OnDeferredBroadcast() noexcept;
 
 	void OnAccept(UniqueSocketDescriptor fd,

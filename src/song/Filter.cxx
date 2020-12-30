@@ -1,5 +1,5 @@
 /*
- * Copyright 2003-2019 The Music Player Daemon Project
+ * Copyright 2003-2020 The Music Player Daemon Project
  * http://www.musicpd.org
  *
  * This program is free software; you can redistribute it and/or modify
@@ -25,7 +25,7 @@
 #include "TagSongFilter.hxx"
 #include "ModifiedSinceSongFilter.hxx"
 #include "AudioFormatSongFilter.hxx"
-#include "AudioParser.hxx"
+#include "pcm/AudioParser.hxx"
 #include "tag/ParseName.hxx"
 #include "time/ISO8601.hxx"
 #include "util/CharUtil.hxx"
@@ -37,7 +37,8 @@
 #include "util/ASCII.hxx"
 #include "util/UriUtil.hxx"
 
-#include <assert.h>
+#include <cassert>
+
 #include <stdlib.h>
 
 #define LOCATE_TAG_FILE_KEY     "file"
@@ -90,10 +91,8 @@ SongFilter::SongFilter(TagType tag, const char *value, bool fold_case)
 							   StringFilter(value, fold_case, fold_case, false)));
 }
 
-SongFilter::~SongFilter()
-{
-	/* this destructor exists here just so it won't get inlined */
-}
+/* this destructor exists here just so it won't get inlined */
+SongFilter::~SongFilter() = default;
 
 std::string
 SongFilter::ToExpression() const noexcept
@@ -106,14 +105,19 @@ ParseTimeStamp(const char *s)
 {
 	assert(s != nullptr);
 
-	char *endptr;
-	unsigned long long value = strtoull(s, &endptr, 10);
-	if (*endptr == 0 && endptr > s)
-		/* it's an integral UNIX time stamp */
-		return std::chrono::system_clock::from_time_t((time_t)value);
+	try {
+		/* try ISO 8601 */
+		return ParseISO8601(s).first;
+	} catch (...) {
+		char *endptr;
+		unsigned long long value = strtoull(s, &endptr, 10);
+		if (*endptr == 0 && endptr > s)
+			/* it's an integral UNIX time stamp */
+			return std::chrono::system_clock::from_time_t((time_t)value);
 
-	/* try ISO 8601 */
-	return ParseISO8601(s).first;
+		/* rethrow the ParseISO8601() error */
+		throw;
+	}
 }
 
 static constexpr bool
@@ -425,29 +429,27 @@ SongFilter::Match(const LightSong &song) const noexcept
 bool
 SongFilter::HasFoldCase() const noexcept
 {
-	for (const auto &i : and_filter.GetItems()) {
-		if (auto t = dynamic_cast<const TagSongFilter *>(i.get())) {
-			if (t->GetFoldCase())
-				return true;
-		} else if (auto u = dynamic_cast<const UriSongFilter *>(i.get())) {
-			if (u->GetFoldCase())
-				return true;
-		}
-	}
+	return std::any_of(
+		and_filter.GetItems().begin(), and_filter.GetItems().end(),
+		[](const auto &item) {
+			if (auto t = dynamic_cast<const TagSongFilter *>(item.get()))
+				return t->GetFoldCase();
 
-	return false;
+			if (auto u = dynamic_cast<const UriSongFilter *>(item.get()))
+				return u->GetFoldCase();
+
+			return false;
+		});
 }
 
 bool
 SongFilter::HasOtherThanBase() const noexcept
 {
-	for (const auto &i : and_filter.GetItems()) {
-		const auto *f = dynamic_cast<const BaseSongFilter *>(i.get());
-		if (f == nullptr)
-			return true;
-	}
-
-	return false;
+	return std::any_of(and_filter.GetItems().begin(), and_filter.GetItems().end(),
+			   [=](const auto &item) {
+				   return !dynamic_cast<const BaseSongFilter *>(
+					   item.get());
+			   });
 }
 
 const char *
@@ -463,9 +465,8 @@ SongFilter::GetBase() const noexcept
 }
 
 SongFilter
-SongFilter::WithoutBasePrefix(const char *_prefix) const noexcept
+SongFilter::WithoutBasePrefix(const std::string_view prefix) const noexcept
 {
-	const StringView prefix(_prefix);
 	SongFilter result;
 
 	for (const auto &i : and_filter.GetItems()) {

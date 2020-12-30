@@ -1,5 +1,5 @@
 /*
- * Copyright 2003-2019 The Music Player Daemon Project
+ * Copyright 2003-2020 The Music Player Daemon Project
  * http://www.musicpd.org
  *
  * This program is free software; you can redistribute it and/or modify
@@ -34,6 +34,14 @@ Song::Song(DetachedSong &&other, Directory &_parent) noexcept
 {
 }
 
+const char *
+Song::GetFilenameSuffix() const noexcept
+{
+	return target.empty()
+		? PathTraitsUTF8::GetFilenameSuffix(filename.c_str())
+		: PathTraitsUTF8::GetPathSuffix(target.c_str());
+}
+
 std::string
 Song::GetURI() const noexcept
 {
@@ -41,7 +49,7 @@ Song::GetURI() const noexcept
 		return filename;
 	else {
 		const char *path = parent.GetPath();
-		return PathTraitsUTF8::Build(path, filename.c_str());
+		return PathTraitsUTF8::Build(path, filename);
 	}
 }
 

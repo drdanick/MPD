@@ -1,5 +1,5 @@
 /*
- * Copyright 2003-2019 The Music Player Daemon Project
+ * Copyright 2003-2020 The Music Player Daemon Project
  * http://www.musicpd.org
  *
  * This program is free software; you can redistribute it and/or modify
@@ -18,11 +18,11 @@
  */
 
 #include "SignalMonitor.hxx"
-#include "config.h"
+#include "event/Features.h"
 
 #ifndef _WIN32
 
-#include "SocketMonitor.hxx"
+#include "SocketEvent.hxx"
 #include "util/Manual.hxx"
 #include "system/Error.hxx"
 
@@ -37,41 +37,44 @@
 #endif
 
 #include <algorithm>
+#include <cassert>
+#include <csignal>
 
 #ifdef USE_SIGNALFD
 #include <pthread.h>
 #endif
 
-#include <assert.h>
-#include <signal.h>
-
-class SignalMonitor final : private SocketMonitor {
+class SignalMonitor final {
 #ifdef USE_SIGNALFD
 	SignalFD fd;
 #else
 	WakeFD fd;
 #endif
 
+	SocketEvent event;
+
 public:
-	SignalMonitor(EventLoop &_loop)
-		:SocketMonitor(_loop) {
+	explicit SignalMonitor(EventLoop &_loop)
+		:event(_loop, BIND_THIS_METHOD(OnSocketReady)) {
 #ifndef USE_SIGNALFD
-		SocketMonitor::Open(SocketDescriptor(fd.Get()));
-		SocketMonitor::ScheduleRead();
+		event.Open(SocketDescriptor(fd.Get()));
+		event.ScheduleRead();
 #endif
 	}
 
-	using SocketMonitor::GetEventLoop;
+	auto &GetEventLoop() const noexcept {
+		return event.GetEventLoop();
+	}
 
 #ifdef USE_SIGNALFD
 	void Update(sigset_t &mask) noexcept {
-		const bool was_open = SocketMonitor::IsDefined();
+		const bool was_open = event.IsDefined();
 
 		fd.Create(mask);
 
 		if (!was_open) {
-			SocketMonitor::Open(SocketDescriptor(fd.Get()));
-			SocketMonitor::ScheduleRead();
+			event.Open(SocketDescriptor(fd.Get()));
+			event.ScheduleRead();
 		}
 	}
 #else
@@ -81,7 +84,7 @@ public:
 #endif
 
 private:
-	bool OnSocketReady(unsigned flags) noexcept override;
+	void OnSocketReady(unsigned flags) noexcept;
 };
 
 /* this should be enough - is it? */
@@ -196,7 +199,7 @@ SignalMonitorRegister(int signo, SignalHandler handler)
 #endif
 }
 
-bool
+void
 SignalMonitor::OnSocketReady(unsigned) noexcept
 {
 #ifdef USE_SIGNALFD
@@ -214,8 +217,6 @@ SignalMonitor::OnSocketReady(unsigned) noexcept
 		if (signal_pending[i].exchange(false))
 			signal_handlers[i]();
 #endif
-
-	return true;
 }
 
 #endif

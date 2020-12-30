@@ -1,5 +1,5 @@
 /*
- * Copyright 2003-2019 The Music Player Daemon Project
+ * Copyright 2003-2020 The Music Player Daemon Project
  * http://www.musicpd.org
  *
  * This program is free software; you can redistribute it and/or modify
@@ -27,8 +27,9 @@
 #include "net/UniqueSocketDescriptor.hxx"
 #include "Log.hxx"
 
-#include <assert.h>
-#include <string.h>
+#include <cassert>
+#include <cstring>
+
 #include <stdio.h>
 
 HttpdClient::~HttpdClient() noexcept
@@ -94,7 +95,7 @@ HttpdClient::HandleLine(const char *line) noexcept
 			should_reject = true;
 		}
 
-		line = strchr(line, ' ');
+		line = std::strchr(line, ' ');
 		if (line == nullptr || strncmp(line + 1, "HTTP/", 5) != 0) {
 			/* HTTP/0.9 without request headers */
 
@@ -215,7 +216,7 @@ HttpdClient::CancelQueue() noexcept
 	ClearQueue();
 
 	if (current_page == nullptr)
-		CancelWrite();
+		event.CancelWrite();
 }
 
 ssize_t
@@ -258,7 +259,7 @@ HttpdClient::TryWrite() noexcept
 			/* another thread has removed the event source
 			   while this thread was waiting for
 			   httpd.mutex */
-			CancelWrite();
+			event.CancelWrite();
 			return true;
 		}
 
@@ -353,7 +354,7 @@ HttpdClient::TryWrite() noexcept
 			if (pages.empty())
 				/* all pages are sent: remove the
 				   event source */
-				CancelWrite();
+				event.CancelWrite();
 		}
 	}
 
@@ -376,7 +377,7 @@ HttpdClient::PushPage(PagePtr page) noexcept
 	queue_size += page->GetSize();
 	pages.emplace(std::move(page));
 
-	ScheduleWrite();
+	event.ScheduleWrite();
 }
 
 void
@@ -388,17 +389,14 @@ HttpdClient::PushMetaData(PagePtr page) noexcept
 	metadata_sent = false;
 }
 
-bool
+void
 HttpdClient::OnSocketReady(unsigned flags) noexcept
 {
-	if (!BufferedSocket::OnSocketReady(flags))
-		return false;
-
-	if (flags & WRITE)
+	if (flags & SocketEvent::WRITE)
 		if (!TryWrite())
-			return false;
+			return;
 
-	return true;
+	BufferedSocket::OnSocketReady(flags);
 }
 
 BufferedSocket::InputResult
@@ -412,7 +410,7 @@ HttpdClient::OnSocketInput(void *data, size_t length) noexcept
 	}
 
 	char *line = (char *)data;
-	char *newline = (char *)memchr(line, '\n', length);
+	char *newline = (char *)std::memchr(line, '\n', length);
 	if (newline == nullptr)
 		return InputResult::MORE;
 

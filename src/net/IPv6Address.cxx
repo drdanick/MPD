@@ -1,5 +1,5 @@
 /*
- * Copyright 2012-2019 Max Kellermann <max.kellermann@gmail.com>
+ * Copyright 2012-2020 Max Kellermann <max.kellermann@gmail.com>
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -30,21 +30,16 @@
 #include "IPv6Address.hxx"
 #include "IPv4Address.hxx"
 
-#include <assert.h>
+#include <cassert>
+
 #include <string.h>
 
-static const struct sockaddr_in6 *
-CastToIPv6(const struct sockaddr *p) noexcept
-{
-	assert(p->sa_family == AF_INET6);
-
-	/* cast through void to work around the bogus alignment warning */
-	const void *q = reinterpret_cast<const void *>(p);
-	return reinterpret_cast<const struct sockaddr_in6 *>(q);
-}
-
 IPv6Address::IPv6Address(SocketAddress src) noexcept
-	:address(*CastToIPv6(src.GetAddress())) {}
+	:address(src.CastTo<struct sockaddr_in6>())
+{
+	assert(!src.IsNull());
+	assert(src.GetFamily() == AF_INET6);
+}
 
 bool
 IPv6Address::IsAny() const noexcept

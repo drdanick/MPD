@@ -48,12 +48,12 @@ IsValidSchemeChar(char ch)
 
 gcc_pure
 static bool
-IsValidScheme(StringView p) noexcept
+IsValidScheme(std::string_view p) noexcept
 {
 	if (p.empty() || !IsValidSchemeStart(p.front()))
 		return false;
 
-	for (size_t i = 1; i < p.size; ++i)
+	for (size_t i = 1; i < p.size(); ++i)
 		if (!IsValidSchemeChar(p[i]))
 			return false;
 
@@ -65,34 +65,39 @@ IsValidScheme(StringView p) noexcept
  * double slash).
  */
 gcc_pure
-static const char *
-uri_after_scheme(const char *uri) noexcept
+static std::string_view
+uri_after_scheme(std::string_view uri) noexcept
 {
-	if (uri[0] == '/' && uri[1] == '/' && uri[2] != '/')
-		return uri + 2;
+	if (uri.length() > 2 &&
+	    uri[0] == '/' && uri[1] == '/' && uri[2] != '/')
+		return uri.substr(2);
 
-	const char *colon = strchr(uri, ':');
-	return colon != nullptr &&
-		IsValidScheme({uri, colon}) &&
-		colon[1] == '/' && colon[2] == '/'
-		? colon + 3
-		: nullptr;
+	auto colon = uri.find(':');
+	if (colon == std::string_view::npos ||
+	    !IsValidScheme(uri.substr(0, colon)))
+		return {};
+
+	uri = uri.substr(colon + 1);
+	if (uri[0] != '/' || uri[1] != '/')
+		return {};
+
+	return uri.substr(2);
 }
 
 bool
 uri_has_scheme(const char *uri) noexcept
 {
-	return !uri_get_scheme(uri).IsNull();
+	return !uri_get_scheme(uri).empty();
 }
 
-StringView
-uri_get_scheme(const char *uri) noexcept
+std::string_view
+uri_get_scheme(std::string_view uri) noexcept
 {
-	const char *end = strstr(uri, "://");
-	if (end == nullptr)
-		return nullptr;
+	auto end = uri.find("://");
+	if (end == std::string_view::npos)
+		return {};
 
-	return {uri, end};
+	return uri.substr(0, end);
 }
 
 bool
@@ -101,46 +106,42 @@ uri_is_relative_path(const char *uri) noexcept
 	return !uri_has_scheme(uri) && *uri != '/';
 }
 
-const char *
-uri_get_path(const char *uri) noexcept
+std::string_view
+uri_get_path(std::string_view uri) noexcept
 {
-	const char *ap = uri_after_scheme(uri);
-	if (ap != nullptr)
-		return strchr(ap, '/');
+	auto ap = uri_after_scheme(uri);
+	if (ap.data() != nullptr) {
+		auto slash = ap.find('/');
+		if (slash == std::string_view::npos)
+			return {};
+		return ap.substr(slash);
+	}
 
 	return uri;
 }
 
-/* suffixes should be ascii only characters */
-const char *
-uri_get_suffix(const char *uri) noexcept
+gcc_pure
+static StringView
+UriWithoutQueryString(StringView uri) noexcept
 {
-	const char *suffix = strrchr(uri, '.');
-	if (suffix == nullptr || suffix == uri ||
-	    suffix[-1] == '/' || suffix[-1] == '\\')
-		return nullptr;
-
-	++suffix;
-
-	if (strpbrk(suffix, "/\\") != nullptr)
-		return nullptr;
-
-	return suffix;
+	return uri.Split('?').first;
 }
 
-const char *
-uri_get_suffix(const char *uri, UriSuffixBuffer &buffer) noexcept
+/* suffixes should be ascii only characters */
+std::string_view
+uri_get_suffix(std::string_view _uri) noexcept
 {
-	const char *suffix = uri_get_suffix(uri);
-	if (suffix == nullptr)
-		return nullptr;
+	const auto uri = UriWithoutQueryString(_uri);
 
-	const char *q = strchr(suffix, '?');
-	if (q != nullptr && size_t(q - suffix) < sizeof(buffer.data)) {
-		memcpy(buffer.data, suffix, q - suffix);
-		buffer.data[q - suffix] = 0;
-		suffix = buffer.data;
-	}
+	const char *dot = uri.FindLast('.');
+	if (dot == nullptr || dot == uri.data ||
+	    dot[-1] == '/' || dot[-1] == '\\')
+		return {};
+
+	auto suffix = uri.substr(dot + 1);
+	if (suffix.Find('/') != nullptr || suffix.Find('\\') != nullptr)
+		/* this was not the last path segment */
+		return {};
 
 	return suffix;
 }
@@ -148,7 +149,7 @@ uri_get_suffix(const char *uri, UriSuffixBuffer &buffer) noexcept
 const char *
 uri_get_fragment(const char *uri) noexcept
 {
-	const char *fragment = strchr(uri, '#');
+	const char *fragment = std::strchr(uri, '#');
 	if (fragment == nullptr)
 		return nullptr;
 

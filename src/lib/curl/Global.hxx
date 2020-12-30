@@ -1,5 +1,5 @@
 /*
- * Copyright 2008-2019 Max Kellermann <max.kellermann@gmail.com>
+ * Copyright 2008-2020 Max Kellermann <max.kellermann@gmail.com>
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -65,16 +65,6 @@ public:
 
 	void InvalidateSockets() noexcept {
 		SocketAction(CURL_SOCKET_TIMEOUT, 0);
-	}
-
-	/**
-	 * This is a kludge to allow pausing/resuming a stream with
-	 * libcurl < 7.32.0.  Read the curl_easy_pause manpage for
-	 * more information.
-	 */
-	void ResumeSockets() {
-		int running_handles;
-		curl_multi_socket_all(multi.Get(), &running_handles);
 	}
 
 private:

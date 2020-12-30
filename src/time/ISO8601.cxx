@@ -1,5 +1,5 @@
 /*
- * Copyright 2007-2019 Content Management AG
+ * Copyright 2007-2020 CM4all GmbH
  * All rights reserved.
  *
  * author: Max Kellermann <mk@cm4all.com>
@@ -32,11 +32,12 @@
 
 #include "ISO8601.hxx"
 #include "Convert.hxx"
+#include "Math.hxx"
 #include "util/StringBuffer.hxx"
 
+#include <cassert>
+#include <cstdlib>
 #include <stdexcept>
-
-#include <assert.h>
 
 StringBuffer<64>
 FormatISO8601(const struct tm &tm) noexcept
@@ -58,11 +59,13 @@ FormatISO8601(std::chrono::system_clock::time_point tp)
 	return FormatISO8601(GmTime(tp));
 }
 
+#ifndef _WIN32
+
 static std::pair<unsigned, unsigned>
 ParseTimeZoneOffsetRaw(const char *&s)
 {
 	char *endptr;
-	unsigned long value = strtoul(s, &endptr, 10);
+	unsigned long value = std::strtoul(s, &endptr, 10);
 	if (endptr == s + 4) {
 		s = endptr;
 		return std::make_pair(value / 100, value % 100);
@@ -72,7 +75,7 @@ ParseTimeZoneOffsetRaw(const char *&s)
 		unsigned hours = value, minutes = 0;
 		if (*s == ':') {
 			++s;
-			minutes = strtoul(s, &endptr, 10);
+			minutes = std::strtoul(s, &endptr, 10);
 			if (endptr != s + 2)
 				throw std::runtime_error("Failed to parse time zone offset");
 
@@ -108,6 +111,74 @@ ParseTimeZoneOffset(const char *&s)
 	return d;
 }
 
+static const char *
+ParseTimeOfDay(const char *s, struct tm &tm,
+	       std::chrono::system_clock::duration &precision) noexcept
+{
+	/* this function always checks "end==s" to work around a
+	   strptime() bug on OS X: if nothing could be parsed,
+	   strptime() returns the input string (indicating success)
+	   instead of nullptr (indicating error) */
+
+	const char *end = strptime(s, "%H", &tm);
+	if (end == nullptr || end == s)
+		return end;
+
+	s = end;
+	precision = std::chrono::hours(1);
+
+	if (*s == ':') {
+		/* with field separators: now a minute must follow */
+
+		++s;
+
+		end = strptime(s, "%M", &tm);
+		if (end == nullptr || end == s)
+			return nullptr;
+
+		s = end;
+		precision = std::chrono::minutes(1);
+
+		/* the "seconds" field is optional */
+		if (*s != ':')
+			return s;
+
+		++s;
+
+		end = strptime(s, "%S", &tm);
+		if (end == nullptr || end == s)
+			return nullptr;
+
+		precision = std::chrono::seconds(1);
+		return end;
+	}
+
+	/* without field separators */
+
+	end = strptime(s, "%M", &tm);
+	if (end == nullptr || end == s)
+		return s;
+
+	s = end;
+	precision = std::chrono::minutes(1);
+
+	end = strptime(s, "%S", &tm);
+	if (end == nullptr || end == s)
+		return s;
+
+	precision = std::chrono::seconds(1);
+	return end;
+}
+
+static bool
+StrptimeFull(const char *s, const char *fmt, struct tm *tm) noexcept
+{
+	const char *end = strptime(s, fmt, tm);
+	return end != nullptr && *end == 0;
+}
+
+#endif
+
 std::pair<std::chrono::system_clock::time_point,
 	  std::chrono::system_clock::duration>
 ParseISO8601(const char *s)
@@ -121,10 +192,23 @@ ParseISO8601(const char *s)
 #else
 	struct tm tm{};
 
+	if (StrptimeFull(s, "%Y-%m", &tm)) {
+		/* full month */
+		tm.tm_mday = 1;
+		const auto start = TimeGm(tm);
+		EndOfMonth(tm);
+		const auto end = TimeGm(tm);
+		return {start, end - start};
+	}
+
 	/* parse the date */
 	const char *end = strptime(s, "%F", &tm);
-	if (end == nullptr)
-		throw std::runtime_error("Failed to parse date");
+	if (end == nullptr) {
+		/* try without field separators */
+		end = strptime(s, "%Y%m%d", &tm);
+		if (end == nullptr)
+			throw std::runtime_error("Failed to parse date");
+	}
 
 	s = end;
 
@@ -134,16 +218,9 @@ ParseISO8601(const char *s)
 	if (*s == 'T') {
 		++s;
 
-		if ((end = strptime(s, "%T", &tm)) != nullptr)
-			precision = std::chrono::seconds(1);
-		else if ((end = strptime(s, "%H:%M", &tm)) != nullptr)
-			precision = std::chrono::minutes(1);
-		else if ((end = strptime(s, "%H", &tm)) != nullptr)
-			precision = std::chrono::hours(1);
-		else
+		s = ParseTimeOfDay(s, tm, precision);
+		if (s == nullptr)
 			throw std::runtime_error("Failed to parse time of day");
-
-		s = end;
 	}
 
 	auto tp = TimeGm(tm);

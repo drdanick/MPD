@@ -1,5 +1,5 @@
 /*
- * Copyright 2003-2019 The Music Player Daemon Project
+ * Copyright 2003-2020 The Music Player Daemon Project
  * http://www.musicpd.org
  *
  * This program is free software; you can redistribute it and/or modify
@@ -21,7 +21,8 @@
 #include "net/SocketError.hxx"
 #include "util/Compiler.h"
 
-#include <assert.h>
+#include <cassert>
+
 #include <string.h>
 
 FullyBufferedSocket::ssize_t
@@ -33,8 +34,8 @@ FullyBufferedSocket::DirectWrite(const void *data, size_t length) noexcept
 		if (IsSocketErrorAgain(code))
 			return 0;
 
-		IdleMonitor::Cancel();
-		BufferedSocket::Cancel();
+		idle_event.Cancel();
+		event.Cancel();
 
 		if (IsSocketErrorClosed(code))
 			OnSocketClosed();
@@ -52,8 +53,8 @@ FullyBufferedSocket::Flush() noexcept
 
 	const auto data = output.Read();
 	if (data.empty()) {
-		IdleMonitor::Cancel();
-		CancelWrite();
+		idle_event.Cancel();
+		event.CancelWrite();
 		return true;
 	}
 
@@ -64,8 +65,8 @@ FullyBufferedSocket::Flush() noexcept
 	output.Consume(nbytes);
 
 	if (output.empty()) {
-		IdleMonitor::Cancel();
-		CancelWrite();
+		idle_event.Cancel();
+		event.CancelWrite();
 	}
 
 	return true;
@@ -87,30 +88,27 @@ FullyBufferedSocket::Write(const void *data, size_t length) noexcept
 	}
 
 	if (was_empty)
-		IdleMonitor::Schedule();
+		idle_event.Schedule();
 	return true;
 }
 
-bool
+void
 FullyBufferedSocket::OnSocketReady(unsigned flags) noexcept
 {
-	if (flags & WRITE) {
+	if (flags & SocketEvent::WRITE) {
 		assert(!output.empty());
-		assert(!IdleMonitor::IsActive());
+		assert(!idle_event.IsPending());
 
 		if (!Flush())
-			return false;
+			return;
 	}
 
-	if (!BufferedSocket::OnSocketReady(flags))
-		return false;
-
-	return true;
+	BufferedSocket::OnSocketReady(flags);
 }
 
 void
 FullyBufferedSocket::OnIdle() noexcept
 {
 	if (Flush() && !output.empty())
-		ScheduleWrite();
+		event.ScheduleWrite();
 }

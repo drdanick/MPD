@@ -1,5 +1,5 @@
 /*
- * Copyright 2003-2019 The Music Player Daemon Project
+ * Copyright 2003-2020 The Music Player Daemon Project
  * http://www.musicpd.org
  *
  * This program is free software; you can redistribute it and/or modify
@@ -20,9 +20,16 @@
 #ifndef MPD_EVENT_POLLRESULT_GENERIC_HXX
 #define MPD_EVENT_POLLRESULT_GENERIC_HXX
 
+#include <cstddef>
 #include <vector>
 
-#include <stddef.h>
+#ifdef _WIN32
+#include <windows.h>
+/* damn you, windows.h! */
+#ifdef GetObject
+#undef GetObject
+#endif
+#endif
 
 class PollResultGeneric
 {
@@ -48,16 +55,6 @@ public:
 
 	void *GetObject(size_t i) const noexcept {
 		return items[i].obj;
-	}
-
-	void Reset() noexcept {
-		items.clear();
-	}
-
-	void Clear(void *obj) noexcept {
-		for (auto i = items.begin(); i != items.end(); ++i)
-			if (i->obj == obj)
-				i->events = 0;
 	}
 
 	void Add(unsigned events, void *obj) noexcept {

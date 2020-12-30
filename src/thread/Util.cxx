@@ -94,14 +94,14 @@ SetThreadIdlePriority() noexcept
 #elif defined(_WIN32)
 	SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_IDLE);
 #endif
-};
+}
 
 void
 SetThreadRealtime()
 {
 #ifdef __linux__
 	struct sched_param sched_param;
-	sched_param.sched_priority = 50;
+	sched_param.sched_priority = 40;
 
 	int policy = SCHED_FIFO;
 #ifdef SCHED_RESET_ON_FORK
@@ -111,4 +111,4 @@ SetThreadRealtime()
 	if (linux_sched_setscheduler(0, policy, &sched_param) < 0)
 		throw MakeErrno("sched_setscheduler failed");
 #endif	// __linux__
-};
+}

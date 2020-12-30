@@ -1,5 +1,5 @@
 /*
- * Copyright 2003-2019 The Music Player Daemon Project
+ * Copyright 2003-2020 The Music Player Daemon Project
  * http://www.musicpd.org
  *
  * This program is free software; you can redistribute it and/or modify
@@ -22,11 +22,12 @@
 
 #include "Config.hxx"
 #include "Queue.hxx"
-#include "event/DeferEvent.hxx"
+#include "event/InjectEvent.hxx"
 #include "thread/Thread.hxx"
 #include "util/Compiler.h"
 
 #include <memory>
+#include <string_view>
 
 class SimpleDatabase;
 class DatabaseListener;
@@ -39,7 +40,7 @@ class CompositeStorage;
 class UpdateService final {
 	const UpdateConfig config;
 
-	DeferEvent defer;
+	InjectEvent defer;
 
 	SimpleDatabase &db;
 	CompositeStorage &storage;
@@ -90,7 +91,7 @@ public:
 	 * @return the job id
 	 */
 	gcc_nonnull_all
-	unsigned Enqueue(const char *path, bool discard);
+	unsigned Enqueue(std::string_view path, bool discard);
 
 	/**
 	 * Clear the queue and cancel the current update.  Does not
@@ -106,7 +107,7 @@ public:
 	void CancelMount(const char *uri) noexcept;
 
 private:
-	/* DeferEvent callback */
+	/* InjectEvent callback */
 	void RunDeferred() noexcept;
 
 	/* the update thread */

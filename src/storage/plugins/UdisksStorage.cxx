@@ -1,5 +1,5 @@
 /*
- * Copyright 2003-2019 The Music Player Daemon Project
+ * Copyright 2003-2020 The Music Player Daemon Project
  * http://www.musicpd.org
  *
  * This program is free software; you can redistribute it and/or modify
@@ -33,7 +33,7 @@
 #include "thread/Cond.hxx"
 #include "thread/SafeSingleton.hxx"
 #include "event/Call.hxx"
-#include "event/DeferEvent.hxx"
+#include "event/InjectEvent.hxx"
 #include "fs/AllocatedPath.hxx"
 #include "util/StringCompare.hxx"
 #include "util/RuntimeError.hxx"
@@ -62,7 +62,7 @@ class UdisksStorage final : public Storage {
 
 	std::exception_ptr mount_error;
 
-	DeferEvent defer_mount, defer_unmount;
+	InjectEvent defer_mount, defer_unmount;
 
 public:
 	template<typename B, typename I, typename IP>
@@ -98,19 +98,19 @@ public:
 	}
 
 	/* virtual methods from class Storage */
-	StorageFileInfo GetInfo(const char *uri_utf8, bool follow) override {
+	StorageFileInfo GetInfo(std::string_view uri_utf8, bool follow) override {
 		MountWait();
 		return mounted_storage->GetInfo(uri_utf8, follow);
 	}
 
-	std::unique_ptr<StorageDirectoryReader> OpenDirectory(const char *uri_utf8) override {
+	std::unique_ptr<StorageDirectoryReader> OpenDirectory(std::string_view uri_utf8) override {
 		MountWait();
 		return mounted_storage->OpenDirectory(uri_utf8);
 	}
 
-	std::string MapUTF8(const char *uri_utf8) const noexcept override;
+	std::string MapUTF8(std::string_view uri_utf8) const noexcept override;
 
-	AllocatedPath MapFS(const char *uri_utf8) const noexcept override {
+	AllocatedPath MapFS(std::string_view uri_utf8) const noexcept override {
 		try {
 			const_cast<UdisksStorage *>(this)->MountWait();
 		} catch (...) {
@@ -120,7 +120,7 @@ public:
 		return mounted_storage->MapFS(uri_utf8);
 	}
 
-	const char *MapToRelativeUTF8(const char *uri_utf8) const noexcept override;
+	std::string_view MapToRelativeUTF8(std::string_view uri_utf8) const noexcept override;
 
 private:
 	void SetMountPoint(Path mount_point);
@@ -227,8 +227,7 @@ try {
 						  DBUS_OM_INTERFACE,
 						  "GetManagedObjects");
 		list_request.Send(connection, *msg.Get(),
-				  std::bind(&UdisksStorage::OnListReply,
-					    this, std::placeholders::_1));
+				  [this](auto o) { return OnListReply(std::move(o)); });
 		return;
 	}
 
@@ -239,8 +238,7 @@ try {
 	AppendMessageIter(*msg.Get()).AppendEmptyArray<DictEntryTypeTraits<StringTypeTraits, VariantTypeTraits>>();
 
 	mount_request.Send(connection, *msg.Get(),
-			   std::bind(&UdisksStorage::OnMountNotify,
-				     this, std::placeholders::_1));
+			   [this](auto o) { return OnMountNotify(std::move(o)); });
 } catch (...) {
 	const std::lock_guard<Mutex> lock(mutex);
 	mount_error = std::current_exception();
@@ -297,8 +295,7 @@ try {
 	AppendMessageIter(*msg.Get()).AppendEmptyArray<DictEntryTypeTraits<StringTypeTraits, VariantTypeTraits>>();
 
 	mount_request.Send(connection, *msg.Get(),
-			   std::bind(&UdisksStorage::OnUnmountNotify,
-				     this, std::placeholders::_1));
+			   [this](auto u) { return OnUnmountNotify(std::move(u)); });
 } catch (...) {
 	const std::lock_guard<Mutex> lock(mutex);
 	mount_error = std::current_exception();
@@ -324,11 +321,9 @@ try {
 }
 
 std::string
-UdisksStorage::MapUTF8(const char *uri_utf8) const noexcept
+UdisksStorage::MapUTF8(std::string_view uri_utf8) const noexcept
 {
-	assert(uri_utf8 != nullptr);
-
-	if (StringIsEmpty(uri_utf8))
+	if (uri_utf8.empty())
 		/* kludge for a special case: return the "udisks://"
 		   URI if the parameter is an empty string to fix the
 		   mount URIs in the state file */
@@ -340,14 +335,14 @@ UdisksStorage::MapUTF8(const char *uri_utf8) const noexcept
 		return mounted_storage->MapUTF8(uri_utf8);
 	} catch (...) {
 		/* fallback - not usable but the best we can do */
-		return PathTraitsUTF8::Build(base_uri.c_str(), uri_utf8);
+		return PathTraitsUTF8::Build(base_uri, uri_utf8);
 	}
 }
 
-const char *
-UdisksStorage::MapToRelativeUTF8(const char *uri_utf8) const noexcept
+std::string_view
+UdisksStorage::MapToRelativeUTF8(std::string_view uri_utf8) const noexcept
 {
-	return PathTraitsUTF8::Relative(base_uri.c_str(), uri_utf8);
+	return PathTraitsUTF8::Relative(base_uri, uri_utf8);
 }
 
 static std::unique_ptr<Storage>
@@ -359,7 +354,7 @@ CreateUdisksStorageURI(EventLoop &event_loop, const char *base_uri)
 
 	std::string id;
 
-	const char *relative_path = strchr(id_begin, '/');
+	const char *relative_path = std::strchr(id_begin, '/');
 	if (relative_path == nullptr) {
 		id = id_begin;
 		relative_path = "";

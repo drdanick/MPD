@@ -1,5 +1,5 @@
 /*
- * Copyright 2003-2019 The Music Player Daemon Project
+ * Copyright 2003-2020 The Music Player Daemon Project
  * http://www.musicpd.org
  *
  * This program is free software; you can redistribute it and/or modify
@@ -30,8 +30,8 @@
 #include "DsdiffDecoderPlugin.hxx"
 #include "../DecoderAPI.hxx"
 #include "input/InputStream.hxx"
-#include "CheckAudioFormat.hxx"
-#include "util/bit_reverse.h"
+#include "pcm/CheckAudioFormat.hxx"
+#include "util/BitReverse.hxx"
 #include "util/ByteOrder.hxx"
 #include "util/StringView.hxx"
 #include "tag/Handler.hxx"
@@ -51,9 +51,20 @@ struct DsdiffChunkHeader {
 	 * Read the "size" attribute from the specified header, converting it
 	 * to the host byte order if needed.
 	 */
-	constexpr
+	[[nodiscard]] constexpr
 	uint64_t GetSize() const {
 		return size.Read();
+	}
+
+	/**
+	 * Applies padding to GetSize(), according to the DSDIFF
+	 * specification
+	 * (http://www.sonicstudio.com/pdf/dsd/DSDIFF_1.5_Spec.pdf)
+	 * section 2.3.
+	 */
+	[[nodiscard]] constexpr
+	uint64_t GetPaddedSize() const noexcept {
+		return (GetSize() + 1) & ~uint64_t(1);
 	}
 };
 
@@ -117,7 +128,7 @@ dsdiff_read_prop_snd(DecoderClient *client, InputStream &is,
 			return false;
 
 		offset_type chunk_end_offset = is.GetOffset()
-			+ header.GetSize();
+			+ header.GetPaddedSize();
 		if (chunk_end_offset > end_offset)
 			return false;
 
@@ -213,7 +224,6 @@ dsdiff_handle_native_tag(DecoderClient *client, InputStream &is,
 		return;
 
 	handler.OnTag(type, {label, length});
-	return;
 }
 
 /**
@@ -449,7 +459,7 @@ dsdiff_stream_decode(DecoderClient &client, InputStream &is)
 }
 
 static bool
-dsdiff_scan_stream(InputStream &is, TagHandler &handler) noexcept
+dsdiff_scan_stream(InputStream &is, TagHandler &handler)
 {
 	DsdiffMetaData metadata;
 	DsdiffChunkHeader chunk_header;

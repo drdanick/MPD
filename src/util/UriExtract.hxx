@@ -32,7 +32,7 @@
 
 #include "Compiler.h"
 
-struct StringView;
+#include <string_view>
 
 /**
  * Checks whether the specified URI has a scheme in the form
@@ -46,8 +46,8 @@ uri_has_scheme(const char *uri) noexcept;
  * Returns the scheme name of the specified URI, or an empty string.
  */
 gcc_pure
-StringView
-uri_get_scheme(const char *uri) noexcept;
+std::string_view
+uri_get_scheme(std::string_view uri) noexcept;
 
 gcc_pure
 bool
@@ -57,24 +57,13 @@ uri_is_relative_path(const char *uri) noexcept;
  * Returns the URI path (including the query string) or nullptr if the
  * given URI has no path.
  */
-gcc_pure gcc_nonnull_all
-const char *
-uri_get_path(const char *uri) noexcept;
+gcc_pure
+std::string_view
+uri_get_path(std::string_view uri) noexcept;
 
 gcc_pure
-const char *
-uri_get_suffix(const char *uri) noexcept;
-
-struct UriSuffixBuffer {
-	char data[8];
-};
-
-/**
- * Returns the file name suffix, ignoring the query string.
- */
-gcc_pure
-const char *
-uri_get_suffix(const char *uri, UriSuffixBuffer &buffer) noexcept;
+std::string_view
+uri_get_suffix(std::string_view uri) noexcept;
 
 /**
  * Returns the URI fragment, i.e. the portion after the '#', but

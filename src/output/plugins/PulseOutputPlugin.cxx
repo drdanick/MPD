@@ -1,5 +1,5 @@
 /*
- * Copyright 2003-2019 The Music Player Daemon Project
+ * Copyright 2003-2020 The Music Player Daemon Project
  * http://www.musicpd.org
  *
  * This program is free software; you can redistribute it and/or modify
@@ -22,6 +22,7 @@
 #include "lib/pulse/LogError.hxx"
 #include "lib/pulse/LockGuard.hxx"
 #include "../OutputAPI.hxx"
+#include "../Error.hxx"
 #include "mixer/MixerList.hxx"
 #include "mixer/plugins/PulseMixerPlugin.hxx"
 #include "util/ScopeExit.hxx"
@@ -33,10 +34,10 @@
 #include <pulse/subscribe.h>
 #include <pulse/version.h>
 
+#include <cassert>
+#include <cstddef>
 #include <stdexcept>
 
-#include <assert.h>
-#include <stddef.h>
 #include <stdlib.h>
 
 #define MPD_PULSE_NAME "Music Player Daemon"
@@ -57,12 +58,21 @@ class PulseOutput final : AudioOutput {
 
 	bool pause;
 
+	/**
+	 * Was Interrupt() called?  This will unblock Play().  It will
+	 * be reset by Cancel() and Pause(), as documented by the
+	 * #AudioOutput interface.
+	 *
+	 * Only initialized while the output is open.
+	 */
+	bool interrupted;
+
 	explicit PulseOutput(const ConfigBlock &block);
 
 public:
 	void SetMixer(PulseMixer &_mixer);
 
-	void ClearMixer(gcc_unused PulseMixer &old_mixer) {
+	void ClearMixer([[maybe_unused]] PulseMixer &old_mixer) {
 		assert(mixer == &old_mixer);
 
 		mixer = nullptr;
@@ -99,7 +109,9 @@ public:
 	void Open(AudioFormat &audio_format) override;
 	void Close() noexcept override;
 
-	std::chrono::steady_clock::duration Delay() const noexcept override;
+	void Interrupt() noexcept override;
+
+	[[nodiscard]] std::chrono::steady_clock::duration Delay() const noexcept override;
 	size_t Play(const void *chunk, size_t size) override;
 	void Cancel() noexcept override;
 	bool Pause() override;
@@ -277,8 +289,8 @@ pulse_wait_for_operation(struct pa_threaded_mainloop *mainloop,
  * the caller thread, to wake pulse_wait_for_operation() up.
  */
 static void
-pulse_output_stream_success_cb(gcc_unused pa_stream *s,
-			       gcc_unused int success, void *userdata)
+pulse_output_stream_success_cb([[maybe_unused]] pa_stream *s,
+			       [[maybe_unused]] int success, void *userdata)
 {
 	PulseOutput &po = *(PulseOutput *)userdata;
 
@@ -326,9 +338,9 @@ inline void
 PulseOutput::OnServerLayoutChanged(pa_subscription_event_type_t t,
 				   uint32_t idx)
 {
-	pa_subscription_event_type_t facility =
+	auto facility =
 		pa_subscription_event_type_t(t & PA_SUBSCRIPTION_EVENT_FACILITY_MASK);
-	pa_subscription_event_type_t type =
+	auto type =
 		pa_subscription_event_type_t(t & PA_SUBSCRIPTION_EVENT_TYPE_MASK);
 
 	if (mixer != nullptr &&
@@ -342,7 +354,7 @@ PulseOutput::OnServerLayoutChanged(pa_subscription_event_type_t t,
 }
 
 static void
-pulse_output_subscribe_cb(gcc_unused pa_context *context,
+pulse_output_subscribe_cb([[maybe_unused]] pa_context *context,
 			  pa_subscription_event_type_t t,
 			  uint32_t idx, void *userdata)
 {
@@ -508,7 +520,7 @@ PulseOutput::WaitConnection()
 }
 
 inline void
-PulseOutput::OnStreamSuspended(gcc_unused pa_stream *_stream)
+PulseOutput::OnStreamSuspended([[maybe_unused]] pa_stream *_stream)
 {
 	assert(_stream == stream || stream == nullptr);
 	assert(mainloop != nullptr);
@@ -574,7 +586,7 @@ PulseOutput::OnStreamWrite(size_t nbytes)
 }
 
 static void
-pulse_output_stream_write_cb(gcc_unused pa_stream *stream, size_t nbytes,
+pulse_output_stream_write_cb([[maybe_unused]] pa_stream *stream, size_t nbytes,
 			     void *userdata)
 {
 	PulseOutput &po = *(PulseOutput *)userdata;
@@ -658,7 +670,7 @@ PulseOutput::Open(AudioFormat &audio_format)
 		break;
 	}
 
-	ss.rate = audio_format.sample_rate;
+	ss.rate = std::min(audio_format.sample_rate, PA_RATE_MAX);
 	ss.channels = audio_format.channels;
 
 	/* create a stream .. */
@@ -677,6 +689,7 @@ PulseOutput::Open(AudioFormat &audio_format)
 	}
 
 	pause = false;
+	interrupted = false;
 }
 
 void
@@ -705,6 +718,21 @@ PulseOutput::Close() noexcept
 }
 
 void
+PulseOutput::Interrupt() noexcept
+{
+	if (mainloop == nullptr)
+		return;
+
+	const Pulse::LockGuard lock(mainloop);
+
+	/* the "interrupted" flag will prevent Play() from blocking,
+	   and will instead throw AudioOutputInterrupted */
+	interrupted = true;
+
+	Signal();
+}
+
+void
 PulseOutput::WaitStream()
 {
 	while (true) {
@@ -719,6 +747,9 @@ PulseOutput::WaitStream()
 					     "failed to connect the stream");
 
 		case PA_STREAM_CREATING:
+			if (interrupted)
+				throw AudioOutputInterrupted{};
+
 			pa_threaded_mainloop_wait(mainloop);
 			break;
 		}
@@ -784,6 +815,9 @@ PulseOutput::Play(const void *chunk, size_t size)
 		if (pa_stream_is_suspended(stream))
 			throw std::runtime_error("suspended");
 
+		if (interrupted)
+			throw AudioOutputInterrupted{};
+
 		pa_threaded_mainloop_wait(mainloop);
 
 		if (pa_stream_get_state(stream) != PA_STREAM_READY)
@@ -813,6 +847,7 @@ PulseOutput::Cancel() noexcept
 	assert(stream != nullptr);
 
 	Pulse::LockGuard lock(mainloop);
+	interrupted = false;
 
 	if (pa_stream_get_state(stream) != PA_STREAM_READY) {
 		/* no need to flush when the stream isn't connected
@@ -842,6 +877,7 @@ PulseOutput::Pause()
 	Pulse::LockGuard lock(mainloop);
 
 	pause = true;
+	interrupted = false;
 
 	/* check if the stream is (already/still) connected */
 
@@ -872,7 +908,7 @@ try {
 }
 
 static bool
-pulse_output_test_default_device(void)
+pulse_output_test_default_device()
 {
 	return PulseOutput::TestDefaultDevice();
 }

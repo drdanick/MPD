@@ -1,5 +1,5 @@
 /*
- * Copyright 2008-2019 Max Kellermann <max.kellermann@gmail.com>
+ * Copyright 2008-2020 Max Kellermann <max.kellermann@gmail.com>
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -29,25 +29,23 @@
 
 #include "Global.hxx"
 #include "Request.hxx"
-#include "Log.hxx"
 #include "event/Loop.hxx"
-#include "event/SocketMonitor.hxx"
-#include "util/RuntimeError.hxx"
-#include "util/Domain.hxx"
+#include "event/SocketEvent.hxx"
 
-#include <assert.h>
-
-static constexpr Domain curlm_domain("curlm");
+#include <cassert>
 
 /**
  * Monitor for one socket created by CURL.
  */
-class CurlSocket final : SocketMonitor {
+class CurlSocket final {
 	CurlGlobal &global;
+
+	SocketEvent socket_event;
 
 public:
 	CurlSocket(CurlGlobal &_global, EventLoop &_loop, SocketDescriptor _fd)
-		:SocketMonitor(_fd, _loop), global(_global) {}
+		:global(_global),
+		 socket_event(_loop, BIND_THIS_METHOD(OnSocketReady), _fd) {}
 
 	~CurlSocket() noexcept {
 		/* TODO: sometimes, CURL uses CURL_POLL_REMOVE after
@@ -59,6 +57,10 @@ public:
 		   better solution? */
 	}
 
+	auto &GetEventLoop() const noexcept {
+		return socket_event.GetEventLoop();
+	}
+
 	/**
 	 * Callback function for CURLMOPT_SOCKETFUNCTION.
 	 */
@@ -66,13 +68,17 @@ public:
 				  curl_socket_t s, int action,
 				  void *userp, void *socketp) noexcept;
 
-	bool OnSocketReady(unsigned flags) noexcept override;
-
 private:
+	SocketDescriptor GetSocket() const noexcept {
+		return socket_event.GetSocket();
+	}
+
+	void OnSocketReady(unsigned events) noexcept;
+
 	static constexpr int FlagsToCurlCSelect(unsigned flags) noexcept {
-		return (flags & (READ | HANGUP) ? CURL_CSELECT_IN : 0) |
-			(flags & WRITE ? CURL_CSELECT_OUT : 0) |
-			(flags & ERROR ? CURL_CSELECT_ERR : 0);
+		return (flags & (SocketEvent::READ | SocketEvent::HANGUP) ? CURL_CSELECT_IN : 0) |
+			(flags & SocketEvent::WRITE ? CURL_CSELECT_OUT : 0) |
+			(flags & SocketEvent::ERROR ? CURL_CSELECT_ERR : 0);
 	}
 
 	gcc_const
@@ -82,13 +88,13 @@ private:
 			return 0;
 
 		case CURL_POLL_IN:
-			return READ;
+			return SocketEvent::READ;
 
 		case CURL_POLL_OUT:
-			return WRITE;
+			return SocketEvent::WRITE;
 
 		case CURL_POLL_INOUT:
-			return READ|WRITE;
+			return SocketEvent::READ|SocketEvent::WRITE;
 		}
 
 		assert(false);
@@ -108,7 +114,7 @@ CurlGlobal::CurlGlobal(EventLoop &_loop)
 }
 
 int
-CurlSocket::SocketFunction(gcc_unused CURL *easy,
+CurlSocket::SocketFunction([[maybe_unused]] CURL *easy,
 			   curl_socket_t s, int action,
 			   void *userp, void *socketp) noexcept
 {
@@ -130,17 +136,16 @@ CurlSocket::SocketFunction(gcc_unused CURL *easy,
 
 	unsigned flags = CurlPollToFlags(action);
 	if (flags != 0)
-		cs->Schedule(flags);
+		cs->socket_event.Schedule(flags);
 	return 0;
 }
 
-bool
+void
 CurlSocket::OnSocketReady(unsigned flags) noexcept
 {
 	assert(GetEventLoop().IsInside());
 
 	global.SocketAction(GetSocket().Get(), FlagsToCurlCSelect(flags));
-	return true;
 }
 
 void
@@ -148,10 +153,7 @@ CurlGlobal::Add(CurlRequest &r)
 {
 	assert(GetEventLoop().IsInside());
 
-	CURLMcode mcode = curl_multi_add_handle(multi.Get(), r.Get());
-	if (mcode != CURLM_OK)
-		throw FormatRuntimeError("curl_multi_add_handle() failed: %s",
-					 curl_multi_strerror(mcode));
+	multi.Add(r.Get());
 
 	InvalidateSockets();
 }
@@ -161,8 +163,7 @@ CurlGlobal::Remove(CurlRequest &r) noexcept
 {
 	assert(GetEventLoop().IsInside());
 
-	curl_multi_remove_handle(multi.Get(), r.Get());
-	InvalidateSockets();
+	multi.Remove(r.Get());
 }
 
 /**
@@ -186,10 +187,8 @@ CurlGlobal::ReadInfo() noexcept
 	assert(GetEventLoop().IsInside());
 
 	CURLMsg *msg;
-	int msgs_in_queue;
 
-	while ((msg = curl_multi_info_read(multi.Get(),
-					   &msgs_in_queue)) != nullptr) {
+	while ((msg = multi.InfoRead()) != nullptr) {
 		if (msg->msg == CURLMSG_DONE) {
 			auto *request = ToRequest(msg->easy_handle);
 			if (request != nullptr)
@@ -204,10 +203,7 @@ CurlGlobal::SocketAction(curl_socket_t fd, int ev_bitmask) noexcept
 	int running_handles;
 	CURLMcode mcode = curl_multi_socket_action(multi.Get(), fd, ev_bitmask,
 						   &running_handles);
-	if (mcode != CURLM_OK)
-		FormatError(curlm_domain,
-			    "curl_multi_socket_action() failed: %s",
-			    curl_multi_strerror(mcode));
+	(void)mcode;
 
 	defer_read_info.Schedule();
 }
@@ -220,18 +216,18 @@ CurlGlobal::UpdateTimeout(long timeout_ms) noexcept
 		return;
 	}
 
-	if (timeout_ms < 10)
-		/* CURL 7.21.1 likes to report "timeout=0", which
+	if (timeout_ms < 1)
+		/* CURL's threaded resolver sets a timeout of 0ms, which
 		   means we're running in a busy loop.  Quite a bad
 		   idea to waste so much CPU.  Let's use a lower limit
-		   of 10ms. */
-		timeout_ms = 10;
+		   of 1ms. */
+		timeout_ms = 1;
 
 	timeout_event.Schedule(std::chrono::milliseconds(timeout_ms));
 }
 
 int
-CurlGlobal::TimerFunction(gcc_unused CURLM *_multi, long timeout_ms,
+CurlGlobal::TimerFunction([[maybe_unused]] CURLM *_multi, long timeout_ms,
 			  void *userp) noexcept
 {
 	auto &global = *(CurlGlobal *)userp;

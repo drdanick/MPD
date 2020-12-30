@@ -1,5 +1,5 @@
 /*
- * Copyright 2003-2019 The Music Player Daemon Project
+ * Copyright 2003-2020 The Music Player Daemon Project
  * http://www.musicpd.org
  *
  * This program is free software; you can redistribute it and/or modify
@@ -23,7 +23,7 @@
 #include "Ptr.hxx"
 #include "Chrono.hxx"
 #include "tag/Tag.hxx"
-#include "AudioFormat.hxx"
+#include "pcm/AudioFormat.hxx"
 #include "util/Compiler.h"
 #include "config.h"
 
@@ -107,6 +107,16 @@ struct Song {
 		:parent(_parent), filename(std::forward<F>(_filename)) {}
 
 	Song(DetachedSong &&other, Directory &_parent) noexcept;
+
+	gcc_pure
+	const char *GetFilenameSuffix() const noexcept;
+
+	/**
+	 * Checks whether the decoder plugin for this song is
+	 * available.
+	 */
+	gcc_pure
+	bool IsPluginAvailable() const noexcept;
 
 	/**
 	 * allocate a new song structure with a local file name and attempt to

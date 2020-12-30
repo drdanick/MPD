@@ -1,5 +1,5 @@
 /*
- * Copyright 2003-2019 The Music Player Daemon Project
+ * Copyright 2003-2020 The Music Player Daemon Project
  * http://www.musicpd.org
  *
  * This program is free software; you can redistribute it and/or modify
@@ -55,7 +55,7 @@
 #include "db/update/Service.hxx"
 #endif
 
-#include <assert.h>
+#include <cassert>
 
 static void
 print_spl_list(Response &r, const PlaylistVector &list)
@@ -69,7 +69,7 @@ print_spl_list(Response &r, const PlaylistVector &list)
 }
 
 CommandResult
-handle_urlhandlers(Client &client, gcc_unused Request args, Response &r)
+handle_urlhandlers(Client &client, [[maybe_unused]] Request args, Response &r)
 {
 	if (client.IsLocal())
 		r.Format("handler: file://\n");
@@ -78,7 +78,7 @@ handle_urlhandlers(Client &client, gcc_unused Request args, Response &r)
 }
 
 CommandResult
-handle_decoders(gcc_unused Client &client, gcc_unused Request args,
+handle_decoders([[maybe_unused]] Client &client, [[maybe_unused]] Request args,
 		Response &r)
 {
 	decoder_list_print(r);
@@ -86,8 +86,8 @@ handle_decoders(gcc_unused Client &client, gcc_unused Request args,
 }
 
 CommandResult
-handle_kill(gcc_unused Client &client, gcc_unused Request request,
-	    gcc_unused Response &r)
+handle_kill([[maybe_unused]] Client &client, [[maybe_unused]] Request request,
+	    [[maybe_unused]] Response &r)
 {
 	return CommandResult::KILL;
 }
@@ -307,7 +307,7 @@ handle_update(Client &client, Request args, Response &r, bool discard)
 }
 
 CommandResult
-handle_update(Client &client, Request args, gcc_unused Response &r)
+handle_update(Client &client, Request args, [[maybe_unused]] Response &r)
 {
 	return handle_update(client, args, r, false);
 }
@@ -316,6 +316,18 @@ CommandResult
 handle_rescan(Client &client, Request args, Response &r)
 {
 	return handle_update(client, args, r, true);
+}
+
+CommandResult
+handle_getvol(Client &client, Request, Response &r)
+{
+	auto &partition = client.GetPartition();
+
+	const auto volume = volume_level_get(partition.outputs);
+	if (volume >= 0)
+		r.Format("volume: %i\n", volume);
+
+	return CommandResult::OK;
 }
 
 CommandResult
@@ -360,14 +372,14 @@ handle_volume(Client &client, Request args, Response &r)
 }
 
 CommandResult
-handle_stats(Client &client, gcc_unused Request args, Response &r)
+handle_stats(Client &client, [[maybe_unused]] Request args, Response &r)
 {
 	stats_print(r, client.GetPartition());
 	return CommandResult::OK;
 }
 
 CommandResult
-handle_config(Client &client, gcc_unused Request args, Response &r)
+handle_config(Client &client, [[maybe_unused]] Request args, Response &r)
 {
 	if (!client.IsLocal()) {
 		r.Error(ACK_ERROR_PERMISSION,

@@ -1,5 +1,5 @@
 /*
- * Copyright 2012-2019 Max Kellermann <max.kellermann@gmail.com>
+ * Copyright 2012-2020 Max Kellermann <max.kellermann@gmail.com>
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -30,11 +30,13 @@
 #ifndef STATIC_SOCKET_ADDRESS_HXX
 #define STATIC_SOCKET_ADDRESS_HXX
 
-#include "SocketAddress.hxx"
+#include "SocketAddress.hxx" // IWYU pragma: export
 #include "Features.hxx"
 #include "util/Compiler.h"
 
-#include <assert.h>
+#include <cassert>
+
+struct StringView;
 
 /**
  * An OO wrapper for struct sockaddr_storage.
@@ -54,17 +56,29 @@ public:
 
 	StaticSocketAddress &operator=(SocketAddress other) noexcept;
 
-	operator SocketAddress() const noexcept {
-		return SocketAddress(reinterpret_cast<const struct sockaddr *>(&address),
-				     size);
+	constexpr operator SocketAddress() const noexcept {
+		return SocketAddress(*this, size);
 	}
 
-	operator struct sockaddr *() noexcept {
-		return reinterpret_cast<struct sockaddr *>(&address);
+	constexpr operator struct sockaddr *() noexcept {
+		return (struct sockaddr *)(void *)&address;
 	}
 
-	operator const struct sockaddr *() const noexcept {
-		return reinterpret_cast<const struct sockaddr *>(&address);
+	constexpr operator const struct sockaddr *() const noexcept {
+		return (const struct sockaddr *)(const void *)&address;
+	}
+
+	/**
+	 * Cast the "sockaddr" pointer to a different address type,
+	 * e.g. "sockaddr_in".  This is only legal after checking
+	 * GetFamily().
+	 */
+	template<typename T>
+	constexpr const T &CastTo() const noexcept {
+		/* cast through void to work around the bogus
+		   alignment warning */
+		const void *q = reinterpret_cast<const void *>(&address);
+		return *reinterpret_cast<const T *>(q);
 	}
 
 	constexpr size_type GetCapacity() const noexcept {

@@ -1,5 +1,5 @@
 /*
- * Copyright 2003-2019 The Music Player Daemon Project
+ * Copyright 2003-2020 The Music Player Daemon Project
  * http://www.musicpd.org
  *
  * This program is free software; you can redistribute it and/or modify
@@ -25,6 +25,7 @@
 #include "lib/ffmpeg/Domain.hxx"
 #include "lib/ffmpeg/Error.hxx"
 #include "lib/ffmpeg/Init.hxx"
+#include "lib/ffmpeg/Interleave.hxx"
 #include "lib/ffmpeg/Buffer.hxx"
 #include "lib/ffmpeg/Frame.hxx"
 #include "lib/ffmpeg/Format.hxx"
@@ -39,9 +40,10 @@
 #include "tag/ReplayGain.hxx"
 #include "tag/MixRamp.hxx"
 #include "input/InputStream.hxx"
-#include "CheckAudioFormat.hxx"
+#include "pcm/CheckAudioFormat.hxx"
 #include "util/ScopeExit.hxx"
 #include "util/ConstBuffer.hxx"
+#include "util/StringAPI.hxx"
 #include "LogV.hxx"
 
 extern "C" {
@@ -52,7 +54,8 @@ extern "C" {
 #include <libavutil/frame.h>
 }
 
-#include <assert.h>
+#include <cassert>
+
 #include <string.h>
 
 /**
@@ -119,6 +122,49 @@ ffmpeg_find_audio_stream(const AVFormatContext &format_context) noexcept
 	return -1;
 }
 
+gcc_pure
+static bool
+IsPicture(const AVStream &stream) noexcept
+{
+	return stream.codecpar->codec_type == AVMEDIA_TYPE_VIDEO &&
+		(stream.disposition & AV_DISPOSITION_ATTACHED_PIC) != 0 &&
+		stream.attached_pic.size > 0;
+}
+
+static const AVStream *
+FindPictureStream(const AVFormatContext &format_context) noexcept
+{
+	for (unsigned i = 0; i < format_context.nb_streams; ++i)
+		if (IsPicture(*format_context.streams[i]))
+			return format_context.streams[i];
+
+	return nullptr;
+}
+
+static const char *
+GetMimeType(const AVCodecDescriptor &codec) noexcept
+{
+	return codec.mime_types != nullptr
+		? *codec.mime_types
+		: nullptr;
+}
+
+static const char *
+GetMimeType(const AVStream &stream) noexcept
+{
+	const auto *codec = avcodec_descriptor_get(stream.codecpar->codec_id);
+	if (codec != nullptr)
+		return GetMimeType(*codec);
+
+	return nullptr;
+}
+
+static ConstBuffer<void>
+ToConstBuffer(const AVPacket &packet) noexcept
+{
+	return {packet.data, size_t(packet.size)};
+}
+
 /**
  * Accessor for AVStream::start_time that replaces AV_NOPTS_VALUE with
  * zero.  We can't use AV_NOPTS_VALUE in calculations, and we simply
@@ -129,48 +175,6 @@ static constexpr int64_t
 start_time_fallback(const AVStream &stream)
 {
 	return FfmpegTimestampFallback(stream.start_time, 0);
-}
-
-/**
- * Copy PCM data from a non-empty AVFrame to an interleaved buffer.
- *
- * Throws #std::exception on error.
- */
-static ConstBuffer<void>
-copy_interleave_frame(const AVCodecContext &codec_context,
-		      const AVFrame &frame,
-		      FfmpegBuffer &global_buffer)
-{
-	assert(frame.nb_samples > 0);
-
-	int plane_size;
-	const int data_size =
-		av_samples_get_buffer_size(&plane_size,
-					   codec_context.channels,
-					   frame.nb_samples,
-					   codec_context.sample_fmt, 1);
-	assert(data_size != 0);
-	if (data_size < 0)
-		throw MakeFfmpegError(data_size);
-
-	void *output_buffer;
-	if (av_sample_fmt_is_planar(codec_context.sample_fmt) &&
-	    codec_context.channels > 1) {
-		output_buffer = global_buffer.GetT<uint8_t>(data_size);
-		if (output_buffer == nullptr)
-			/* Not enough memory - shouldn't happen */
-			throw std::bad_alloc();
-
-		PcmInterleave(output_buffer,
-			      ConstBuffer<const void *>((const void *const*)frame.extended_data,
-							codec_context.channels),
-			      frame.nb_samples,
-			      av_get_bytes_per_sample(codec_context.sample_fmt));
-	} else {
-		output_buffer = frame.extended_data[0];
-	}
-
-	return { output_buffer, (size_t)data_size };
 }
 
 /**
@@ -206,14 +210,14 @@ PtsToPcmFrame(uint64_t pts, const AVStream &stream,
  * #AVFrame.
  */
 static DecoderCommand
-FfmpegSendFrame(DecoderClient &client, InputStream &is,
+FfmpegSendFrame(DecoderClient &client, InputStream *is,
 		AVCodecContext &codec_context,
 		const AVFrame &frame,
 		size_t &skip_bytes,
 		FfmpegBuffer &buffer)
 {
 	ConstBuffer<void> output_buffer =
-		copy_interleave_frame(codec_context, frame, buffer);
+		Ffmpeg::InterleaveFrame(frame, buffer);
 
 	if (skip_bytes > 0) {
 		if (skip_bytes >= output_buffer.size) {
@@ -233,7 +237,7 @@ FfmpegSendFrame(DecoderClient &client, InputStream &is,
 }
 
 static DecoderCommand
-FfmpegReceiveFrames(DecoderClient &client, InputStream &is,
+FfmpegReceiveFrames(DecoderClient &client, InputStream *is,
 		    AVCodecContext &codec_context,
 		    AVFrame &frame,
 		    size_t &skip_bytes,
@@ -285,8 +289,8 @@ FfmpegReceiveFrames(DecoderClient &client, InputStream &is,
  * desired time stamp has been reached
  */
 static DecoderCommand
-ffmpeg_send_packet(DecoderClient &client, InputStream &is,
-		   AVPacket &&packet,
+ffmpeg_send_packet(DecoderClient &client, InputStream *is,
+		   const AVPacket &packet,
 		   AVCodecContext &codec_context,
 		   const AVStream &stream,
 		   AVFrame &frame,
@@ -337,24 +341,6 @@ ffmpeg_send_packet(DecoderClient &client, InputStream &is,
 		cmd = DecoderCommand::STOP;
 
 	return cmd;
-}
-
-static DecoderCommand
-ffmpeg_send_packet(DecoderClient &client, InputStream &is,
-		   const AVPacket &packet,
-		   AVCodecContext &codec_context,
-		   const AVStream &stream,
-		   AVFrame &frame,
-		   uint64_t min_frame, size_t pcm_frame_size,
-		   FfmpegBuffer &buffer)
-{
-	return ffmpeg_send_packet(client, is,
-				  /* copy the AVPacket, because FFmpeg
-				     < 3.0 requires this */
-				  AVPacket(packet),
-				  codec_context, stream,
-				  frame, min_frame, pcm_frame_size,
-				  buffer);
 }
 
 gcc_const
@@ -461,7 +447,7 @@ FfmpegScanTag(const AVFormatContext &format_context, int audio_stream,
  * DecoderClient::SubmitTag().
  */
 static void
-FfmpegCheckTag(DecoderClient &client, InputStream &is,
+FfmpegCheckTag(DecoderClient &client, InputStream *is,
 	       AVFormatContext &format_context, int audio_stream)
 {
 	AVStream &stream = *format_context.streams[audio_stream];
@@ -479,7 +465,7 @@ FfmpegCheckTag(DecoderClient &client, InputStream &is,
 }
 
 static void
-FfmpegDecode(DecoderClient &client, InputStream &input,
+FfmpegDecode(DecoderClient &client, InputStream *input,
 	     AVFormatContext &format_context)
 {
 	const int find_result =
@@ -532,7 +518,11 @@ FfmpegDecode(DecoderClient &client, InputStream &input,
 		? FromFfmpegTimeChecked(av_stream.duration, av_stream.time_base)
 		: FromFfmpegTimeChecked(format_context.duration, AV_TIME_BASE_Q);
 
-	client.Ready(audio_format, input.IsSeekable(), total_time);
+	client.Ready(audio_format,
+		     input
+		     ? input->IsSeekable()
+		     : (format_context.ctx_flags & AVFMTCTX_UNSEEKABLE) != 0,
+		     total_time);
 
 	FfmpegParseMetaData(client, format_context, audio_stream);
 
@@ -604,12 +594,11 @@ ffmpeg_decode(DecoderClient &client, InputStream &input)
 	FormatDebug(ffmpeg_domain, "detected input format '%s' (%s)",
 		    input_format->name, input_format->long_name);
 
-	FfmpegDecode(client, input, *format_context);
+	FfmpegDecode(client, &input, *format_context);
 }
 
 static bool
-FfmpegScanStream(AVFormatContext &format_context,
-		 TagHandler &handler) noexcept
+FfmpegScanStream(AVFormatContext &format_context, TagHandler &handler)
 {
 	const int find_result =
 		avformat_find_stream_info(&format_context, nullptr);
@@ -638,20 +627,56 @@ FfmpegScanStream(AVFormatContext &format_context,
 
 	FfmpegScanMetadata(format_context, audio_stream, handler);
 
+	if (handler.WantPicture()) {
+		const auto *picture_stream = FindPictureStream(format_context);
+		if (picture_stream != nullptr)
+			handler.OnPicture(GetMimeType(*picture_stream),
+					  ToConstBuffer(picture_stream->attached_pic));
+	}
+
 	return true;
 }
 
 static bool
-ffmpeg_scan_stream(InputStream &is, TagHandler &handler) noexcept
-try {
+ffmpeg_scan_stream(InputStream &is, TagHandler &handler)
+{
 	AvioStream stream(nullptr, is);
 	if (!stream.Open())
 		return false;
 
 	auto f = FfmpegOpenInput(stream.io, is.GetURI(), nullptr);
 	return FfmpegScanStream(*f, handler);
-} catch (...) {
-	return false;
+}
+
+static void
+ffmpeg_uri_decode(DecoderClient &client, const char *uri)
+{
+	auto format_context =
+		FfmpegOpenInput(nullptr, uri, nullptr);
+
+	const auto *input_format = format_context->iformat;
+	FormatDebug(ffmpeg_domain, "detected input format '%s' (%s)",
+		    input_format->name, input_format->long_name);
+
+	FfmpegDecode(client, nullptr, *format_context);
+}
+
+static std::set<std::string>
+ffmpeg_protocols() noexcept
+{
+	std::set<std::string> protocols;
+
+	const AVInputFormat *format = nullptr;
+	void *opaque = nullptr;
+	while ((format = av_demuxer_iterate(&opaque)) != nullptr) {
+		if (StringIsEqual(format->name, "rtsp")) {
+			protocols.emplace("rtsp://");
+			protocols.emplace("rtsps://");
+		} else if (StringIsEqual(format->name, "rtp"))
+			protocols.emplace("rtp://");
+	}
+
+	return protocols;
 }
 
 /**
@@ -698,7 +723,7 @@ static const char *const ffmpeg_mime_types[] = {
 	"audio/aac",
 	"audio/aacp",
 	"audio/ac3",
-	"audio/aiff"
+	"audio/aiff",
 	"audio/amr",
 	"audio/basic",
 	"audio/flac",
@@ -711,12 +736,13 @@ static const char *const ffmpeg_mime_types[] = {
 	"audio/qcelp",
 	"audio/vorbis",
 	"audio/vorbis+ogg",
+	"audio/wav",
 	"audio/x-8svx",
 	"audio/x-16sv",
 	"audio/x-aac",
 	"audio/x-ac3",
 	"audio/x-adx",
-	"audio/x-aiff"
+	"audio/x-aiff",
 	"audio/x-alaw",
 	"audio/x-au",
 	"audio/x-dca",
@@ -736,7 +762,7 @@ static const char *const ffmpeg_mime_types[] = {
 	"audio/x-pn-realaudio",
 	"audio/x-pn-multirate-realaudio",
 	"audio/x-speex",
-	"audio/x-tta"
+	"audio/x-tta",
 	"audio/x-voc",
 	"audio/x-wav",
 	"audio/x-wma",
@@ -776,5 +802,6 @@ static const char *const ffmpeg_mime_types[] = {
 constexpr DecoderPlugin ffmpeg_decoder_plugin =
 	DecoderPlugin("ffmpeg", ffmpeg_decode, ffmpeg_scan_stream)
 	.WithInit(ffmpeg_init, ffmpeg_finish)
+	.WithProtocols(ffmpeg_protocols, ffmpeg_uri_decode)
 	.WithSuffixes(ffmpeg_suffixes)
 	.WithMimeTypes(ffmpeg_mime_types);

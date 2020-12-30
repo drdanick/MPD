@@ -1,5 +1,5 @@
 /*
- * Copyright 2003-2019 The Music Player Daemon Project
+ * Copyright 2003-2020 The Music Player Daemon Project
  * http://www.musicpd.org
  *
  * This program is free software; you can redistribute it and/or modify
@@ -25,26 +25,26 @@
 #include "lib/curl/Init.hxx"
 #include "lib/curl/Global.hxx"
 #include "lib/curl/Slist.hxx"
+#include "lib/curl/String.hxx"
 #include "lib/curl/Request.hxx"
 #include "lib/curl/Handler.hxx"
+#include "lib/curl/Escape.hxx"
 #include "lib/expat/ExpatParser.hxx"
 #include "fs/Traits.hxx"
-#include "event/DeferEvent.hxx"
+#include "event/InjectEvent.hxx"
 #include "thread/Mutex.hxx"
 #include "thread/Cond.hxx"
 #include "time/Parser.hxx"
 #include "util/ASCII.hxx"
-#include "util/IterableSplitString.hxx"
 #include "util/RuntimeError.hxx"
 #include "util/StringCompare.hxx"
 #include "util/StringFormat.hxx"
 #include "util/UriExtract.hxx"
 
+#include <cassert>
 #include <memory>
 #include <string>
 #include <utility>
-
-#include <assert.h>
 
 class CurlStorage final : public Storage {
 	const std::string base;
@@ -57,47 +57,34 @@ public:
 		 curl(_loop) {}
 
 	/* virtual methods from class Storage */
-	StorageFileInfo GetInfo(const char *uri_utf8, bool follow) override;
+	StorageFileInfo GetInfo(std::string_view uri_utf8, bool follow) override;
 
-	std::unique_ptr<StorageDirectoryReader> OpenDirectory(const char *uri_utf8) override;
+	std::unique_ptr<StorageDirectoryReader> OpenDirectory(std::string_view uri_utf8) override;
 
-	std::string MapUTF8(const char *uri_utf8) const noexcept override;
+	[[nodiscard]] std::string MapUTF8(std::string_view uri_utf8) const noexcept override;
 
-	const char *MapToRelativeUTF8(const char *uri_utf8) const noexcept override;
+	[[nodiscard]] std::string_view MapToRelativeUTF8(std::string_view uri_utf8) const noexcept override;
 };
 
 std::string
-CurlStorage::MapUTF8(const char *uri_utf8) const noexcept
+CurlStorage::MapUTF8(std::string_view uri_utf8) const noexcept
 {
-	assert(uri_utf8 != nullptr);
-
-	if (StringIsEmpty(uri_utf8))
+	if (uri_utf8.empty())
 		return base;
 
-	CurlEasy easy;
-	std::string path_esc;
-
-	for (auto elt: IterableSplitString(uri_utf8, '/')) {
-		char *elt_esc = easy.Escape(elt.data, elt.size);
-		if (!path_esc.empty())
-			path_esc.push_back('/');
-		path_esc += elt_esc;
-		curl_free(elt_esc);
-	}
-
-	return PathTraitsUTF8::Build(base.c_str(), path_esc.c_str());
+	std::string path_esc = CurlEscapeUriPath(uri_utf8);
+	return PathTraitsUTF8::Build(base, path_esc);
 }
 
-const char *
-CurlStorage::MapToRelativeUTF8(const char *uri_utf8) const noexcept
+std::string_view
+CurlStorage::MapToRelativeUTF8(std::string_view uri_utf8) const noexcept
 {
-	// TODO: escape/unescape?
-
-	return PathTraitsUTF8::Relative(base.c_str(), uri_utf8);
+	return PathTraitsUTF8::Relative(base,
+					CurlUnescape(uri_utf8));
 }
 
 class BlockingHttpRequest : protected CurlResponseHandler {
-	DeferEvent defer_start;
+	InjectEvent defer_start;
 
 	std::exception_ptr postponed_error;
 
@@ -115,7 +102,9 @@ public:
 			     BIND_THIS_METHOD(OnDeferredStart)),
 		 request(curl, uri, *this) {
 		// TODO: use CurlInputStream's configuration
+	}
 
+	void DeferStart() noexcept {
 		/* start the transfer inside the IOThread */
 		defer_start.Schedule();
 	}
@@ -126,6 +115,10 @@ public:
 
 		if (postponed_error)
 			std::rethrow_exception(postponed_error);
+	}
+
+	CURL *GetEasy() noexcept {
+		return request.Get();
 	}
 
 protected:
@@ -143,7 +136,7 @@ protected:
 	}
 
 private:
-	/* DeferEvent callback */
+	/* InjectEvent callback */
 	void OnDeferredStart() noexcept {
 		assert(!done);
 
@@ -173,7 +166,7 @@ struct DavResponse {
 		std::chrono::system_clock::time_point::min();
 	uint64_t length = 0;
 
-	bool Check() const {
+	[[nodiscard]] bool Check() const {
 		return !href.empty();
 	}
 };
@@ -182,7 +175,7 @@ static unsigned
 ParseStatus(const char *s)
 {
 	/* skip the "HTTP/1.1" prefix */
-	const char *space = strchr(s, ' ');
+	const char *space = std::strchr(s, ' ');
 	if (space == nullptr)
 		return 0;
 
@@ -265,6 +258,8 @@ public:
 		 CommonExpatParser(ExpatNamespaceSeparator{'|'})
 	{
 		request.SetOption(CURLOPT_CUSTOMREQUEST, "PROPFIND");
+		request.SetOption(CURLOPT_FOLLOWLOCATION, 1L);
+		request.SetOption(CURLOPT_MAXREDIRS, 1L);
 
 		request_headers.Append(StringFormat<40>("depth: %u", depth));
 
@@ -273,6 +268,7 @@ public:
 		request.SetOption(CURLOPT_POSTFIELDS,
 				  "<?xml version=\"1.0\"?>\n"
 				  "<a:propfind xmlns:a=\"DAV:\">"
+				  "<a:prop><a:resourcetype/></a:prop>"
 				  "<a:prop><a:getcontenttype/></a:prop>"
 				  "<a:prop><a:getcontentlength/></a:prop>"
 				  "</a:propfind>");
@@ -280,6 +276,8 @@ public:
 		// TODO: send request body
 	}
 
+	using BlockingHttpRequest::GetEasy;
+	using BlockingHttpRequest::DeferStart;
 	using BlockingHttpRequest::Wait;
 
 protected:
@@ -315,7 +313,7 @@ private:
 
 	/* virtual methods from CommonExpatParser */
 	void StartElement(const XML_Char *name,
-			  gcc_unused const XML_Char **attrs) final {
+			  [[maybe_unused]] const XML_Char **attrs) final {
 		switch (state) {
 		case State::ROOT:
 			if (strcmp(name, "DAV:|response") == 0)
@@ -396,7 +394,7 @@ private:
 			break;
 
 		case State::HREF:
-			response.href.assign(s, len);
+			response.href.append(s, len);
 			break;
 
 		case State::STATUS:
@@ -427,6 +425,7 @@ public:
 	}
 
 	const StorageFileInfo &Perform() {
+		DeferStart();
 		Wait();
 		return info;
 	}
@@ -446,22 +445,20 @@ protected:
 };
 
 StorageFileInfo
-CurlStorage::GetInfo(const char *uri_utf8, gcc_unused bool follow)
+CurlStorage::GetInfo(std::string_view uri_utf8, [[maybe_unused]] bool follow)
 {
 	// TODO: escape the given URI
 
-	std::string uri = base;
-	uri += uri_utf8;
-
+	const auto uri = MapUTF8(uri_utf8);
 	return HttpGetInfoOperation(*curl, uri.c_str()).Perform();
 }
 
 gcc_pure
-static const char *
+static std::string_view
 UriPathOrSlash(const char *uri) noexcept
 {
-	const char *path = uri_get_path(uri);
-	if (path == nullptr)
+	auto path = uri_get_path(uri);
+	if (path.data() == nullptr)
 		path = "/";
 	return path;
 }
@@ -477,9 +474,10 @@ class HttpListDirectoryOperation final : public PropfindOperation {
 public:
 	HttpListDirectoryOperation(CurlGlobal &curl, const char *uri)
 		:PropfindOperation(curl, uri, 1),
-		 base_path(UriPathOrSlash(uri)) {}
+		 base_path(CurlUnescape(GetEasy(), UriPathOrSlash(uri))) {}
 
 	std::unique_ptr<StorageDirectoryReader> Perform() {
+		DeferStart();
 		Wait();
 		return ToReader();
 	}
@@ -495,21 +493,24 @@ private:
 	 */
 	gcc_pure
 	StringView HrefToEscapedName(const char *href) const noexcept {
-		const char *path = uri_get_path(href);
+		StringView path = uri_get_path(href);
 		if (path == nullptr)
 			return nullptr;
 
-		path = StringAfterPrefix(path, base_path.c_str());
-		if (path == nullptr || *path == 0)
+		/* kludge: ignoring case in this comparison to avoid
+		   false negatives if the web server uses a different
+		   case */
+		path = StringAfterPrefixIgnoreCase(path, base_path.c_str());
+		if (path == nullptr || path.empty())
 			return nullptr;
 
-		const char *slash = strchr(path, '/');
+		const char *slash = path.Find('/');
 		if (slash == nullptr)
 			/* regular file */
 			return path;
-		else if (slash[1] == 0)
+		else if (slash == &path.back())
 			/* trailing slash: collection; strip the slash */
-			return {path, slash};
+			return {path.data, slash};
 		else
 			/* strange, better ignore it */
 			return nullptr;
@@ -521,12 +522,10 @@ protected:
 		if (r.status != 200)
 			return;
 
-		const auto escaped_name = HrefToEscapedName(r.href.c_str());
-		if (escaped_name.IsNull())
+		std::string href = CurlUnescape(GetEasy(), r.href.c_str());
+		const auto name = HrefToEscapedName(href.c_str());
+		if (name.IsNull())
 			return;
-
-		// TODO: unescape
-		const auto name = escaped_name;
 
 		entries.emplace_front(std::string(name.data, name.size));
 
@@ -540,12 +539,9 @@ protected:
 };
 
 std::unique_ptr<StorageDirectoryReader>
-CurlStorage::OpenDirectory(const char *uri_utf8)
+CurlStorage::OpenDirectory(std::string_view uri_utf8)
 {
-	// TODO: escape the given URI
-
-	std::string uri = base;
-	uri += uri_utf8;
+	std::string uri = MapUTF8(uri_utf8);
 
 	/* collection URIs must end with a slash */
 	if (uri.back() != '/')
