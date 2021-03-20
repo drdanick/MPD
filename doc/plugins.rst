@@ -210,6 +210,8 @@ will be in effect.
      - Verify the peer's SSL certificate? `More information <http://curl.haxx.se/libcurl/c/CURLOPT_SSL_VERIFYPEER.html>`_.
    * - **verify_host yes|no**
      - Verify the certificate's name against host? `More information <http://curl.haxx.se/libcurl/c/CURLOPT_SSL_VERIFYHOST.html>`_.
+   * - **cacert**
+     - Set path to Certificate Authority (CA) bundle `More information <https://curl.se/libcurl/c/CURLOPT_CAINFO.html>`_.
 
 ffmpeg
 ------
@@ -643,11 +645,15 @@ Encodes into `Ogg Opus <http://www.opus-codec.org/>`_.
    * - Setting
      - Description
    * - **bitrate**
-     - Sets the data rate in bit per second. The special value "auto" lets libopus choose a rate (which is the default), and "max" uses the maximum possible data rate.
+     - Sets the data rate in bits per second. The special value "auto" lets libopus choose a rate (which is the default), and "max" uses the maximum possible data rate.
    * - **complexity**
      - Sets the `Opus complexity <https://wiki.xiph.org/OpusFAQ#What_is_the_complexity_of_Opus.3F>`_.
    * - **signal**
      - Sets the Opus signal type. Valid values are "auto" (the default), "voice" and "music".
+   * - **vbr yes|no|constrained**
+     - Sets the vbr mode. Setting to "yes" (default) enables variable bitrate, "no" forces constant bitrate and frame sizes, "constrained" uses constant bitrate analogous to CBR in AAC and MP3.
+   * - **packet_loss**
+     - Sets the expected packet loss percentage. This value can be increased from the default "0" for a more redundant stream at the expense of quality.
    * - **opustags yes|no**
      - Configures how metadata is interleaved into the stream. If set to yes, then metadata is inserted using ogg stream chaining, as specified in :rfc:`7845`. If set to no (the default), then ogg stream chaining is avoided and other output-dependent method is used, if available.
 
@@ -1048,6 +1054,21 @@ The pipe plugin starts a program and writes raw PCM data into its standard input
    * - **command CMD**
      - This command is invoked with the shell.
 
+pipewire
+--------
+
+Connect to a `PipeWire <https://pipewire.org/>``_ server.  Requires
+``libpipewire``.
+
+.. list-table::
+   :widths: 20 80
+   :header-rows: 1
+
+   * - Setting
+     - Description
+   * - **target ID**
+     - Link to the given target id.
+
 .. _pulse_plugin:
 
 pulse
@@ -1140,6 +1161,32 @@ audio API.  Its primary use is local playback on Android, where
 floating point samples.
 
 
+snapcast
+--------
+
+Snapcast is a multiroom client-server audio player.  This plugin
+allows MPD to act as a `Snapcast
+<https://github.com/badaix/snapcast>`__ server.  Snapcast clients
+connect to it and receive audio data from MPD.
+
+.. list-table::
+   :widths: 20 80
+   :header-rows: 1
+
+   * - Setting
+     - Description
+   * - **port P**
+     - Binds the Snapcast server to the specified port.  The default
+       port is :samp:`1704`.
+   * - **bind_to_address ADDR**
+     - Binds the Snapcast server to the specified address.  Multiple
+       addresses in parallel are not supported.  The default is to
+       bind on all addresses on port :samp:`1704`.
+   * - **zeroconf yes|no**
+     - Publish the Snapcast server as service type ``_snapcast._tcp``
+       via Zeroconf (Avahi or Bonjour).  Default is :samp:`yes`.
+
+
 solaris
 -------
 The "Solaris" plugin runs only on SUN Solaris, and plays via /dev/audio.
@@ -1171,6 +1218,8 @@ The `Windows Audio Session API <https://docs.microsoft.com/en-us/windows/win32/c
      - Enumerate all devices in log while playing started. Useful for device configuration. The default value is "no".
    * - **exclusive yes|no**
      - Exclusive mode blocks all other audio source, and get best audio quality without resampling. Stopping playing release the exclusive control of the output device. The default value is "no".
+   * - **dop yes|no**
+     - Enable DSD over PCM. Require exclusive mode. The default value is "no".
 
 
 .. _filter_plugins:

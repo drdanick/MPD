@@ -36,7 +36,6 @@ output_features.set('ENABLE_HTTPD_OUTPUT', get_option('httpd'))
 if get_option('httpd')
   output_plugins_sources += [
     'httpd/IcyMetaDataServer.cxx',
-    'httpd/Page.cxx',
     'httpd/HttpdClient.cxx',
     'httpd/HttpdOutputPlugin.cxx',
   ]
@@ -86,6 +85,10 @@ if enable_pipe_output
   output_plugins_sources += 'PipeOutputPlugin.cxx'
 endif
 
+if pipewire_dep.found()
+  output_plugins_sources += 'PipeWireOutputPlugin.cxx'
+endif
+
 if pulse_dep.found()
   output_plugins_sources += 'PulseOutputPlugin.cxx'
 endif
@@ -114,6 +117,21 @@ if libsndio_dep.found()
   output_plugins_sources += 'SndioOutputPlugin.cxx'
 endif
 
+output_features.set('ENABLE_SNAPCAST_OUTPUT', get_option('snapcast'))
+if get_option('snapcast')
+  output_plugins_sources += [
+    'snapcast/SnapcastOutputPlugin.cxx',
+    'snapcast/Client.cxx',
+  ]
+  output_plugins_deps += [ event_dep, net_dep, yajl_dep, zeroconf_dep ]
+
+  output_features.set('HAVE_YAJL', yajl_dep.found())
+
+  # TODO: the Snapcast plugin needs just the "wave" encoder, but this
+  # enables all available encoders
+  need_encoder = true
+endif
+
 enable_solaris_output = get_option('solaris_output')
 if enable_solaris_output.auto()
   enable_solaris_output = host_machine.system() == 'sunos' or host_machine.system() == 'solaris'
@@ -136,11 +154,12 @@ endif
 output_features.set('ENABLE_WASAPI_OUTPUT', is_windows)
 if is_windows
   output_plugins_sources += [
-    'WasapiOutputPlugin.cxx',
+    'wasapi/WasapiOutputPlugin.cxx',
   ]
   wasapi_dep = [
     c_compiler.find_library('ksuser', required: true),
     c_compiler.find_library('ole32', required: true),
+    win32_dep,
   ]
 else
   wasapi_dep = dependency('', required: false)
@@ -155,6 +174,7 @@ output_plugins = static_library(
     apple_dep,
     libao_dep,
     libjack_dep,
+    pipewire_dep,
     pulse_dep,
     libshout_dep,
     libsndio_dep,

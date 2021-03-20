@@ -1,5 +1,5 @@
 /*
- * Copyright 2003-2020 The Music Player Daemon Project
+ * Copyright 2003-2021 The Music Player Daemon Project
  * http://www.musicpd.org
  *
  * This program is free software; you can redistribute it and/or modify
@@ -75,7 +75,7 @@ public:
 	 */
 	static constexpr unsigned IMPLICIT_FLAGS = ERROR|HANGUP;
 
-	typedef std::make_signed<size_t>::type ssize_t;
+	using ssize_t = std::make_signed<size_t>::type;
 
 	SocketEvent(EventLoop &_loop, Callback _callback,
 		    SocketDescriptor _fd=SocketDescriptor::Undefined()) noexcept

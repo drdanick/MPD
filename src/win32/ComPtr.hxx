@@ -1,5 +1,5 @@
 /*
- * Copyright 2020 The Music Player Daemon Project
+ * Copyright 2020-2021 The Music Player Daemon Project
  * http://www.musicpd.org
  *
  * This program is free software; you can redistribute it and/or modify
@@ -32,6 +32,7 @@ template <typename T>
 class ComPtr {
 public:
 	using pointer = T *;
+	using reference = T &;
 	using element_type = T;
 
 	constexpr ComPtr() noexcept : ptr(nullptr) {}
@@ -75,7 +76,7 @@ public:
 	pointer get() const noexcept { return ptr; }
 	explicit operator bool() const noexcept { return ptr; }
 
-	auto operator*() const { return *ptr; }
+	reference operator*() const noexcept { return *ptr; }
 	pointer operator->() const noexcept { return ptr; }
 
 	void CoCreateInstance(REFCLSID class_id, LPUNKNOWN unknown_outer = nullptr,
@@ -84,7 +85,7 @@ public:
 			::CoCreateInstance(class_id, unknown_outer, class_context,
 					   __uuidof(T), reinterpret_cast<void **>(&ptr));
 		if (FAILED(result)) {
-			throw FormatHResultError(result, "Unable to create instance");
+			throw MakeHResultError(result, "Unable to create instance");
 		}
 	}
 
@@ -112,6 +113,6 @@ template <typename T>
 void swap(ComPtr<T> &lhs, ComPtr<T> &rhs) noexcept {
 	lhs.swap(rhs);
 }
-}
+} // namespace std
 
 #endif

@@ -1,5 +1,5 @@
 /*
- * Copyright 2003-2020 The Music Player Daemon Project
+ * Copyright 2003-2021 The Music Player Daemon Project
  * http://www.musicpd.org
  *
  * This program is free software; you can redistribute it and/or modify
@@ -21,21 +21,21 @@
 #define EVENT_LOOP_HXX
 
 #include "Chrono.hxx"
+#include "TimerWheel.hxx"
+#include "TimerList.hxx"
 #include "Backend.hxx"
 #include "SocketEvent.hxx"
 #include "event/Features.h"
 #include "time/ClockCache.hxx"
-#include "util/Compiler.h"
 #include "util/IntrusiveList.hxx"
 
 #ifdef HAVE_THREADED_EVENT_LOOP
 #include "WakeFD.hxx"
 #include "thread/Id.hxx"
 #include "thread/Mutex.hxx"
-#endif
 
-#include <boost/intrusive/set.hpp>
 #include <boost/intrusive/list.hpp>
+#endif
 
 #include <atomic>
 #include <cassert>
@@ -46,7 +46,6 @@
 namespace Uring { class Queue; class Manager; }
 #endif
 
-class TimerEvent;
 class DeferEvent;
 class InjectEvent;
 
@@ -63,20 +62,11 @@ class EventLoop final
 {
 #ifdef HAVE_THREADED_EVENT_LOOP
 	WakeFD wake_fd;
-	SocketEvent wake_event{*this, BIND_THIS_METHOD(OnSocketReady)};
+	SocketEvent wake_event{*this, BIND_THIS_METHOD(OnSocketReady), wake_fd.GetSocket()};
 #endif
 
-	struct TimerCompare {
-		constexpr bool operator()(const TimerEvent &a,
-					  const TimerEvent &b) const noexcept;
-	};
-
-	using TimerSet =
-		boost::intrusive::multiset<TimerEvent,
-					   boost::intrusive::base_hook<boost::intrusive::set_base_hook<boost::intrusive::link_mode<boost::intrusive::auto_unlink>>>,
-					   boost::intrusive::compare<TimerCompare>,
-					   boost::intrusive::constant_time_size<false>>;
-	TimerSet timers;
+	TimerWheel coarse_timers;
+	TimerList timers;
 
 	using DeferList = IntrusiveList<DeferEvent>;
 
@@ -183,7 +173,7 @@ public:
 	 * iteration, because it is assumed that the event loop runs
 	 * for a negligible duration.
 	 */
-	gcc_pure
+	[[gnu::pure]]
 	const auto &SteadyNow() const noexcept {
 #ifdef HAVE_THREADED_EVENT_LOOP
 		assert(IsInside());
@@ -193,7 +183,7 @@ public:
 	}
 
 #ifdef HAVE_URING
-	gcc_pure
+	[[gnu::pure]]
 	Uring::Queue *GetUring() noexcept;
 #endif
 
@@ -215,7 +205,8 @@ public:
 	 */
 	bool AbandonFD(SocketEvent &event) noexcept;
 
-	void AddTimer(TimerEvent &t, Event::Duration d) noexcept;
+	void Insert(CoarseTimerEvent &t) noexcept;
+	void Insert(FineTimerEvent &t) noexcept;
 
 	/**
 	 * Schedule a call to DeferEvent::RunDeferred().
@@ -298,7 +289,7 @@ public:
 	/**
 	 * Are we currently running inside this EventLoop's thread?
 	 */
-	gcc_pure
+	[[gnu::pure]]
 	bool IsInside() const noexcept {
 #ifdef HAVE_THREADED_EVENT_LOOP
 		return thread.IsInside();

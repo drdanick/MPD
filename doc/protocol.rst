@@ -69,11 +69,14 @@ that, the specified number of bytes of binary data follows, then a
 newline, and finally the ``OK`` line.
 
 If the object to be transmitted is large, the server may choose a
-reasonable chunk size and transmit only a portion.  Usually, the
-response also contains a ``size`` line which specifies the total
-(uncropped) size, and the command usually has a way to specify an
-offset into the object; this way, the client can copy the whole file
-without blocking the connection for too long.
+reasonable chunk size and transmit only a portion.  The maximum chunk
+size can be changed by clients with the :ref:`binarylimit
+<command_binarylimit>` command.
+
+Usually, the response also contains a ``size`` line which specifies
+the total (uncropped) size, and the command usually has a way to
+specify an offset into the object; this way, the client can copy the
+whole file without blocking the connection for too long.
 
 Example::
 
@@ -283,10 +286,15 @@ The following tags are supported by :program:`MPD`:
 * **date**: the song's release date. This is usually a 4-digit year.
 * **originaldate**: the song's original release date.
 * **composer**: the artist who composed the song.
+* **composersort**: same as composer, but for sorting.
 * **performer**: the artist who performed the song.
 * **conductor**: the conductor who conducted the song.
 * **work**: `"a work is a distinct intellectual or artistic creation,
   which can be expressed in the form of one or more audio recordings" <https://musicbrainz.org/doc/Work>`_
+* **ensemble**: the ensemble performing this song, e.g. "Wiener Philharmoniker".
+* **movement**: name of the movement, e.g. "Andante con moto".
+* **movementnumber**: movement number, e.g. "2" or "II".
+* **location**: location of the recording, e.g. "Royal Albert Hall".
 * **grouping**: "used if the sound belongs to a larger category of
   sounds/music" (`from the IDv2.4.0 TIT1 description
   <http://id3.org/id3v2.4.0-frames>`_).
@@ -412,7 +420,9 @@ Querying :program:`MPD`'s status
     - ``update``: a database update has started or finished.  If the database was modified during the update, the ``database`` event is also emitted.
     - ``stored_playlist``: a stored playlist has been modified, renamed, created or deleted
     - ``playlist``: the queue (i.e. the current playlist) has been modified
-    - ``player``: the player has been started, stopped or seeked
+    - ``player``: the player has been started, stopped or seeked or
+      tags of the currently playing song have changed (e.g. received
+      from stream)
     - ``mixer``: the volume has been changed
     - ``output``: an audio output has been added, removed or modified (e.g. renamed, enabled or disabled)
     - ``options``: options like repeat, random, crossfade, replay gain
@@ -555,7 +565,7 @@ Playback options
 
 :command:`single {STATE}` [#since_0_15]_
     Sets single state to ``STATE``,
-    ``STATE`` should be ``0``, ``1`` or ``oneshot`` [#since_0_20]_.
+    ``STATE`` should be ``0``, ``1`` or ``oneshot`` [#since_0_21]_.
     When single is activated, playback is stopped after current song, or
     song is repeated if the 'repeat' mode is enabled.
 
@@ -684,6 +694,11 @@ Whenever possible, ids should be used.
     (directories add recursively). ``URI``
     can also be a single file.
 
+    Clients that are connected via local socket may add arbitrary
+    local files (URI is an absolute path).  Example::
+
+     add "/home/foo/Music/bar.ogg"
+
 .. _command_addid:
 
 :command:`addid {URI} [POSITION]`
@@ -737,7 +752,7 @@ Whenever possible, ids should be used.
 
 .. _command_playlistfind:
 
-:command:`playlistfind {TAG} {NEEDLE}`
+:command:`playlistfind {FILTER}`
     Finds songs in the queue with strict
     matching.
 
@@ -758,7 +773,7 @@ Whenever possible, ids should be used.
 
 .. _command_playlistsearch:
 
-:command:`playlistsearch {TAG} {NEEDLE}`
+:command:`playlistsearch {FILTER}`
     Searches case-insensitively for partial matches in the
     queue.
 
@@ -1365,6 +1380,17 @@ Connection settings
 :command:`ping`
     Does nothing but return "OK".
 
+.. _command_binarylimit:
+
+:command:`binarylimit SIZE` [#since_0_22_4]_
+
+    Set the maximum :ref:`binary response <binary>` size for the
+    current connection to the specified number of bytes.
+
+    A bigger value means less overhead for transmitting large
+    entities, but it also means that the connection is blocked for a
+    longer time.
+
 .. _command_tagtypes:
 
 :command:`tagtypes`
@@ -1590,6 +1616,7 @@ client-to-client messages are local to the current partition.
 .. [#since_0_14] Since :program:`MPD` 0.14
 .. [#since_0_15] Since :program:`MPD` 0.15
 .. [#since_0_16] Since :program:`MPD` 0.16
-.. [#since_0_19] Since :program:`MPD` 0.20
+.. [#since_0_19] Since :program:`MPD` 0.19
 .. [#since_0_20] Since :program:`MPD` 0.20
 .. [#since_0_21] Since :program:`MPD` 0.21
+.. [#since_0_22_4] Since :program:`MPD` 0.22.4

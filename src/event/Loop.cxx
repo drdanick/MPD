@@ -1,5 +1,5 @@
 /*
- * Copyright 2003-2020 The Music Player Daemon Project
+ * Copyright 2003-2021 The Music Player Daemon Project
  * http://www.musicpd.org
  *
  * This program is free software; you can redistribute it and/or modify
@@ -18,7 +18,6 @@
  */
 
 #include "Loop.hxx"
-#include "TimerEvent.hxx"
 #include "DeferEvent.hxx"
 #include "SocketEvent.hxx"
 #include "IdleEvent.hxx"
@@ -33,13 +32,6 @@
 #include "util/PrintException.hxx"
 #include <stdio.h>
 #endif
-
-constexpr bool
-EventLoop::TimerCompare::operator()(const TimerEvent &a,
-				    const TimerEvent &b) const noexcept
-{
-	return a.due < b.due;
-}
 
 EventLoop::EventLoop(
 #ifdef HAVE_THREADED_EVENT_LOOP
@@ -56,14 +48,10 @@ EventLoop::EventLoop(
 	 alive(!_thread.IsNull())
 #endif
 {
-#ifdef HAVE_THREADED_EVENT_LOOP
-	wake_event.Open(SocketDescriptor(wake_fd.Get()));
-#endif
 }
 
 EventLoop::~EventLoop() noexcept
 {
-	assert(timers.empty());
 	assert(defer.empty());
 	assert(idle.empty());
 #ifdef HAVE_THREADED_EVENT_LOOP
@@ -155,12 +143,18 @@ EventLoop::AbandonFD(SocketEvent &event)  noexcept
 }
 
 void
-EventLoop::AddTimer(TimerEvent &t, Event::Duration d) noexcept
+EventLoop::Insert(CoarseTimerEvent &t) noexcept
+{
+	coarse_timers.Insert(t, SteadyNow());
+	again = true;
+}
+
+void
+EventLoop::Insert(FineTimerEvent &t) noexcept
 {
 	assert(IsInside());
 
-	t.due = SteadyNow() + d;
-	timers.insert(t);
+	timers.Insert(t);
 	again = true;
 }
 
@@ -169,24 +163,13 @@ EventLoop::HandleTimers() noexcept
 {
 	const auto now = SteadyNow();
 
-	Event::Duration timeout;
+	auto fine_timeout = timers.Run(now);
+	auto coarse_timeout = coarse_timers.Run(now);
 
-	while (!quit) {
-		auto i = timers.begin();
-		if (i == timers.end())
-			break;
-
-		TimerEvent &t = *i;
-		timeout = t.due - now;
-		if (timeout > timeout.zero())
-			return timeout;
-
-		timers.erase(i);
-
-		t.Run();
-	}
-
-	return Event::Duration(-1);
+	return fine_timeout.count() < 0 ||
+		(coarse_timeout.count() >= 0 && coarse_timeout < fine_timeout)
+		? coarse_timeout
+		: fine_timeout;
 }
 
 void
@@ -329,14 +312,18 @@ EventLoop::Run() noexcept
 		{
 			const std::lock_guard<Mutex> lock(mutex);
 			HandleInject();
+#endif
+
+			if (again)
+				/* re-evaluate timers because one of
+				   the DeferEvents may have added a
+				   new timeout */
+				continue;
+
+#ifdef HAVE_THREADED_EVENT_LOOP
 			busy = false;
 		}
 #endif
-
-		if (again)
-			/* re-evaluate timers because one of the
-			   DeferEvents may have added a new timeout */
-			continue;
 
 		/* wait for new event */
 

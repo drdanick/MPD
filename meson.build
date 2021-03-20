@@ -261,7 +261,6 @@ sources = [
   'src/LogInit.cxx',
   'src/ls.cxx',
   'src/Instance.cxx',
-  'src/win32/Win32Main.cxx',
   'src/MusicBuffer.cxx',
   'src/MusicPipe.cxx',
   'src/MusicChunk.cxx',
@@ -309,6 +308,12 @@ sources = [
   'src/PlaylistFile.cxx',
 ]
 
+if is_windows
+  sources += [
+    'src/win32/Win32Main.cxx',
+  ]
+endif
+
 if not is_android
   sources += [
     'src/CommandLine.cxx',
@@ -343,6 +348,7 @@ subdir('src/system')
 subdir('src/thread')
 subdir('src/net')
 subdir('src/event')
+subdir('src/win32')
 
 subdir('src/apple')
 
@@ -360,6 +366,7 @@ subdir('src/lib/gcrypt')
 subdir('src/lib/nfs')
 subdir('src/lib/oss')
 subdir('src/lib/pcre')
+subdir('src/lib/pipewire')
 subdir('src/lib/pulse')
 subdir('src/lib/sndio')
 subdir('src/lib/sqlite')
@@ -368,6 +375,8 @@ subdir('src/lib/upnp')
 subdir('src/lib/yajl')
 
 subdir('src/lib/crypto')
+
+subdir('src/zeroconf')
 
 subdir('src/fs')
 subdir('src/config')
@@ -384,7 +393,6 @@ subdir('src/decoder')
 subdir('src/encoder')
 subdir('src/song')
 subdir('src/playlist')
-subdir('src/zeroconf')
 
 if curl_dep.found()
   sources += 'src/RemoteTagCache.cxx'

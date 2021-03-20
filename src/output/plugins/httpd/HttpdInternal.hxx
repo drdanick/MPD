@@ -1,5 +1,5 @@
 /*
- * Copyright 2003-2020 The Music Player Daemon Project
+ * Copyright 2003-2021 The Music Player Daemon Project
  * http://www.musicpd.org
  *
  * This program is free software; you can redistribute it and/or modify
@@ -140,14 +140,12 @@ private:
 			       boost::intrusive::constant_time_size<true>> clients;
 
 	/**
-	 * A temporary buffer for the httpd_output_read_page()
-	 * function.
+	 * A temporary buffer for the ReadPage() function.
 	 */
-	char buffer[32768];
+	std::byte buffer[32768];
 
 	/**
-	 * The maximum and current number of clients connected
-	 * at the same time.
+	 * The maximum number of clients connected at the same time.
 	 */
 	unsigned clients_max;
 

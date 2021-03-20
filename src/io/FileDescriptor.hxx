@@ -30,8 +30,6 @@
 #ifndef FILE_DESCRIPTOR_HXX
 #define FILE_DESCRIPTOR_HXX
 
-#include "util/Compiler.h"
-
 #include <cstddef>
 #include <utility>
 
@@ -76,25 +74,25 @@ public:
 	/**
 	 * Ask the kernel whether this is a valid file descriptor.
 	 */
-	gcc_pure
+	[[gnu::pure]]
 	bool IsValid() const noexcept;
 
 	/**
 	 * Ask the kernel whether this is a regular file.
 	 */
-	gcc_pure
+	[[gnu::pure]]
 	bool IsRegularFile() const noexcept;
 
 	/**
 	 * Ask the kernel whether this is a pipe.
 	 */
-	gcc_pure
+	[[gnu::pure]]
 	bool IsPipe() const noexcept;
 
 	/**
 	 * Ask the kernel whether this is a socket descriptor.
 	 */
-	gcc_pure
+	[[gnu::pure]]
 	bool IsSocket() const noexcept;
 #endif
 
@@ -149,9 +147,12 @@ public:
 #ifdef _WIN32
 	void EnableCloseOnExec() noexcept {}
 	void DisableCloseOnExec() noexcept {}
+	void SetBinaryMode() noexcept;
 #else
 	static bool CreatePipeNonBlock(FileDescriptor &r,
 				       FileDescriptor &w) noexcept;
+
+	void SetBinaryMode() noexcept {}
 
 	/**
 	 * Enable non-blocking mode on this file descriptor.
@@ -219,7 +220,7 @@ public:
 		return lseek(Get(), offset, SEEK_CUR);
 	}
 
-	gcc_pure
+	[[gnu::pure]]
 	off_t Tell() const noexcept {
 		return lseek(Get(), 0, SEEK_CUR);
 	}
@@ -227,7 +228,7 @@ public:
 	/**
 	 * Returns the size of the file in bytes, or -1 on error.
 	 */
-	gcc_pure
+	[[gnu::pure]]
 	off_t GetSize() const noexcept;
 
 	ssize_t Read(void *buffer, std::size_t length) noexcept {
@@ -256,7 +257,7 @@ public:
 	int WaitReadable(int timeout) const noexcept;
 	int WaitWritable(int timeout) const noexcept;
 
-	gcc_pure
+	[[gnu::pure]]
 	bool IsReadyForWriting() const noexcept;
 #endif
 };

@@ -1,5 +1,5 @@
 /*
- * Copyright 2003-2020 The Music Player Daemon Project
+ * Copyright 2003-2021 The Music Player Daemon Project
  * http://www.musicpd.org
  *
  * This program is free software; you can redistribute it and/or modify
@@ -427,21 +427,19 @@ UpdateWalk::DirectoryMakeUriParentChecked(Directory &root,
 	StringView uri(_uri);
 
 	while (true) {
-		auto s = uri.Split('/');
-		const std::string_view name = s.first;
-		const auto rest = s.second;
+		auto [name, rest] = uri.Split('/');
 		if (rest == nullptr)
 			break;
 
 		if (!name.empty()) {
 			directory = DirectoryMakeChildChecked(*directory,
 							      std::string(name).c_str(),
-							      s.first);
+							      name);
 			if (directory == nullptr)
 				break;
 		}
 
-		uri = s.second;
+		uri = rest;
 	}
 
 	return directory;

@@ -1,5 +1,5 @@
 /*
- * Copyright 2020 The Music Player Daemon Project
+ * Copyright 2020-2021 The Music Player Daemon Project
  * http://www.musicpd.org
  *
  * This program is free software; you can redistribute it and/or modify
@@ -29,9 +29,11 @@
 class COM {
 public:
 	COM() {
-		HRESULT result = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
-		if (FAILED(result)) {
-			throw FormatHResultError(result, "Unable to initialize COM");
+		if (HRESULT result = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED|COINIT_DISABLE_OLE1DDE);
+		    FAILED(result)) {
+			throw MakeHResultError(
+				result,
+				"Unable to initialize COM with COINIT_APARTMENTTHREADED");
 		}
 	}
 	~COM() noexcept { CoUninitialize(); }
